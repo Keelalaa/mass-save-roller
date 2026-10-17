@@ -197,7 +197,7 @@ header .sp{flex:1}
 
   <section>
     <div class="panel">
-      <h2>Enemies <span class="sp"></span><button id="toggleAll" class="small" title="Minimize or expand every card">Minimize all</button><button id="addGroup" class="primary small">+ Add enemy group</button></h2>
+      <h2>Enemies <span class="sp"></span><button id="undoEdit" class="small" disabled>↩ Undo</button><button id="redoEdit" class="small" disabled>↪ Redo</button><button id="toggleAll" class="small" title="Minimize or expand every card">Minimize all</button><button id="addGroup" class="primary small">+ Add enemy group</button></h2>
       <div class="hint">Each group is one kind of monster (e.g. 6 Goblins). Tick the enemies caught in the spell. Click a damage type to cycle: <span class="chip resist">resistant</span> <span class="chip immune">immune</span> <span class="chip vuln">vulnerable</span>.</div>
       <div id="groups"></div>
     </div>
@@ -458,6 +458,7 @@ function moveEnemy(e,from,to){
 }
 function splitEnemy(g,e){
   if(g.enemies.length<2){toast('That enemy already has its own card.');return;}
+  snap(`give ${label(g,e)} its own card`);
   const name=label(g,e);if(!e.tname)e.tname=name;
   const c=JSON.parse(JSON.stringify(g));c.id=uid();c.name=name;c.enemies=[];
   state.groups.splice(state.groups.indexOf(g)+1,0,c);
@@ -466,12 +467,14 @@ function splitEnemy(g,e){
   toast(`${name} has its own card now — change its modifiers there.`);
 }
 function moveToGroup(g,e,to){
+  snap(`move ${label(g,e)} to ${to.name}`);
   const name=label(g,e);if(!e.tname)e.tname=name;
   e.n=to.enemies.reduce((m,x)=>Math.max(m,x.n),0)+1;
   moveEnemy(e,g,to);save();recompute();
   toast(`Moved ${name} to ${to.name} — it uses ${to.name}’s modifiers now.`);
 }
 function mergeGroup(g,to){
+  snap(`merge ${g.name} into ${to.name}`);
   g.enemies.slice().forEach(e=>{
     if(!e.tname)e.tname=label(g,e);
     e.n=to.enemies.reduce((m,x)=>Math.max(m,x.n),0)+1;
@@ -491,6 +494,51 @@ function updateTargetCount(){
   $('#targetCount').textContent=n?`${n} enem${n===1?'y':'ies'} targeted`:'No enemies targeted';
 }
 function lockLast(){if(state.last&&!state.last.locked){state.last.locked=true;renderResults();}}
+// ---------- Undo / Redo for edits to enemies (separate from "Undo roll") ----------
+// Each edit saves a copy of the cards first. Undoing puts HP etc. back; for Roll20 tokens the
+// difference is then sent like any other HP change (so edits made in Roll20 since still count).
+const undoStack=[],redoStack=[];
+function snap(what){
+  undoStack.push({what,groups:JSON.stringify(state.groups)});
+  if(undoStack.length>40)undoStack.shift();
+  redoStack.length=0;renderUndo();
+}
+function restoreGroups(json){
+  const cur=new Map();
+  state.groups.forEach(g=>g.enemies.forEach(e=>{if(e.tokenId)cur.set(e.tokenId,e);}));
+  const gs=JSON.parse(json);
+  gs.forEach(g=>g.enemies.forEach(e=>{
+    const c=e.tokenId&&cur.get(e.tokenId);if(!c)return;
+    // what Roll20 has now stays the starting point, so only the difference is sent
+    e.synced=c.synced;e.syncedTemp=c.syncedTemp;e.blocked=c.blocked;e.needInit=c.needInit;
+    if(e.max!==c.max&&e.synced!=null){e.needInit=true;}   // e.g. undoing "Reset all HP": put max back too
+  }));
+  state.groups=gs;
+}
+function undoEdit(){
+  const s=undoStack.pop();if(!s)return;
+  redoStack.push({what:s.what,groups:JSON.stringify(state.groups)});
+  restoreGroups(s.groups);lockLast();save();renderGroups();renderResults();renderUndo();
+  toast(`Undid: ${s.what}`);logEv('undo-edit',s.what);
+}
+function redoEdit(){
+  const s=redoStack.pop();if(!s)return;
+  undoStack.push({what:s.what,groups:JSON.stringify(state.groups)});
+  restoreGroups(s.groups);lockLast();save();renderGroups();renderResults();renderUndo();
+  toast(`Redid: ${s.what}`);
+}
+function renderUndo(){
+  const u=$('#undoEdit'),r=$('#redoEdit');if(!u)return;
+  u.disabled=!undoStack.length;r.disabled=!redoStack.length;
+  u.title=undoStack.length?`Undo: ${undoStack[undoStack.length-1].what} (Ctrl+Z)`:'Nothing to undo';
+  r.title=redoStack.length?`Redo: ${redoStack[redoStack.length-1].what} (Ctrl+Y)`:'Nothing to redo';
+}
+document.addEventListener('keydown',ev=>{
+  if(!(ev.ctrlKey||ev.metaKey)||/^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName))return;
+  const k=ev.key.toLowerCase();
+  if(k==='z'&&!ev.shiftKey){ev.preventDefault();undoEdit();}
+  else if(k==='y'||(k==='z'&&ev.shiftKey)){ev.preventDefault();redoEdit();}
+});
 function bindGroups(){
   const box=$('#groups');
   const ctx=t=>{const card=t.closest('.group');if(!card)return {};const g=findG(card.dataset.gid);const row=t.closest('.enemy');const e=row&&g?g.enemies.find(x=>x.id===row.dataset.eid):null;return {g,e};};
@@ -503,8 +551,8 @@ function bindGroups(){
     const t=ev.target,{g,e}=ctx(t);if(!g)return;
     const f=t.dataset.f;
     if(f){
-      if(f==='count'){setCount(g,t.value);lockLast();}
-      else if(f==='lr'){g.lr=clamp(num(t.value),0,9);g.enemies.forEach(x=>x.lrLeft=g.lr);lockLast();}
+      if(f==='count'){snap(`how many ${g.name}`);setCount(g,t.value);lockLast();}
+      else if(f==='lr'){snap(`Legendary Resistance on ${g.name}`);g.lr=clamp(num(t.value),0,9);g.enemies.forEach(x=>x.lrLeft=g.lr);lockLast();}
       else if(f==='cover')g.cover=num(t.value);
       else if(t.type==='checkbox')g[f]=t.checked;
       else g[f]=t.value;
@@ -514,6 +562,7 @@ function bindGroups(){
     if(t.dataset.merge!=null){const to=findG(t.value);if(to)mergeGroup(g,to);return;}
     if(e&&t.dataset.e){
       const k=t.dataset.e;
+      if(k!=='amt')snap(k==='target'?`tick ${label(g,e)}`:`${k==='hp'?'HP':k==='max'?'max HP':'temp HP'} of ${label(g,e)}`);
       if(k==='target'){e.target=t.checked;save();updateTargetCount();if(state.pending)renderResults();return;}
       if(k==='amt')return;
       e[k]=Math.max(0,num(t.value));
@@ -532,11 +581,14 @@ function bindGroups(){
     if(a==='chip'){const d=b.dataset.type,cyc={undefined:'resist',resist:'immune',immune:'vuln',vuln:undefined};const n=cyc[g.dmg[d]];if(n)g.dmg[d]=n;else delete g.dmg[d];save();recompute();return;}
     if(a==='hurt'||a==='heal'){
       const amt=Math.max(0,num(b.closest('.enemy').querySelector('[data-e=amt]').value));if(!amt)return;
+      snap(`${a==='heal'?'heal':'damage'} ${amt} on ${label(g,e)}`);
       if(a==='heal')e.hp=Math.min(e.max,e.hp+amt);
       else{const ab=Math.min(e.temp,amt);e.temp-=ab;e.hp=Math.max(0,e.hp-(amt-ab));}
       lockLast();save();renderGroups();return;
     }
-    if(a==='delgroup'){if(!armed(b,'Delete?'))return;state.groups=state.groups.filter(x=>x!==g);lockLast();}
+    const what={delgroup:`delete ${g.name}`,dup:`duplicate ${g.name}`,resethp:`Reset all HP on ${g.name}`,fullheal:`Full heal on ${g.name}`,resetlr:`Reset Legendary Res. on ${g.name}`,cleardead:`Remove defeated from ${g.name}`,all:`Target all in ${g.name}`,none:`Target none in ${g.name}`}[a];
+    if(what&&a!=='delgroup')snap(what);
+    if(a==='delgroup'){if(!armed(b,'Delete?'))return;snap(what);state.groups=state.groups.filter(x=>x!==g);lockLast();}
     else if(a==='dup'){const c=JSON.parse(JSON.stringify(g));c.id=uid();c.name=g.name+' (copy)';c.enemies=[];setCount(c,g.count);state.groups.splice(state.groups.indexOf(g)+1,0,c);}
     else if(a==='resethp'){g.enemies.forEach(x=>{x.hp=x.max=rollHp(g.hp);x.temp=0;if(x.tokenId){x.needInit=true;x.synced=null;x.blocked=false;}});lockLast();}
     else if(a==='fullheal'){g.enemies.forEach(x=>{x.hp=x.max;});lockLast();}
@@ -603,6 +655,8 @@ function bindGroups(){
     if(dest!==from){const [g]=state.groups.splice(from,1);state.groups.splice(dest,0,g);save();renderGroups();}
   };
   box.addEventListener('pointerup',end);box.addEventListener('pointercancel',end);
+  $('#undoEdit').addEventListener('click',undoEdit);
+  $('#redoEdit').addEventListener('click',redoEdit);
   $('#toggleAll').addEventListener('click',()=>{
     const close=!state.groups.every(g=>closed.has(g.id));
     state.groups.forEach(g=>closed.set(g.id,close));renderGroups();
@@ -795,6 +849,7 @@ async function pullTokens(gid){
     logEv('tokens',`selected ${(d.tokens||[]).length}: ${(d.tokens||[]).map(t=>t.name+'='+t.hp+'/'+t.max).join(', ')}`);
     if(!d.tokens||!d.tokens.length){toast('Select this group’s monster tokens in Roll20 first, then click this again.');return;}
     const g=findG(gid);if(!g)return;
+    snap(`use selected Roll20 tokens in ${g.name}`);
     mergeTokens(d.tokens,g);
   }catch(err){toast(r20Problem(err));}
 }
@@ -838,7 +893,7 @@ async function runSync(retry){
   if(inits.length){
     sync.busy=true;sync.state='sending';sync.text=`Setting HP on ${inits.length} token${inits.length===1?'':'s'} in Roll20…`;renderSync();
     try{
-      const d=await r20Send(`!msr-init {req} bar=${state.rules.r20Bar} `+inits.map(({e})=>`${e.tokenId}:${e.hp}`).join(' '));
+      const d=await r20Send(`!msr-init {req} bar=${state.rules.r20Bar} `+inits.map(({e})=>`${e.tokenId}:${e.hp}~${Math.max(e.max,e.hp)}`).join(' '));
       const refused=new Set(d.notSelected||[]);
       inits.forEach(({e})=>{if(refused.has(e.tokenId))e.blocked=true;else{e.needInit=false;e.synced=e.hp;e.blocked=false;}});
       logEv('init',`set ${inits.length-refused.size}, refused ${refused.size}`);

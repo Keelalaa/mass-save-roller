@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.0.7';
+  const VERSION = '2.0.8';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -77,7 +77,8 @@
       const eq = /^(bar|dead|tbar|empty0)=(\w+)$/.exec(p);
       if (eq) { opts[eq[1]] = eq[2]; return; }
       const i = p.lastIndexOf(':');
-      if (i > 0) pairs.push({ id: p.slice(0, i), n: parseInt(p.slice(i + 1), 10) || 0 });
+      // "id:number" or, for !msr-init, "id:hp~max"
+      if (i > 0) { const v = p.slice(i + 1).split('~'); pairs.push({ id: p.slice(0, i), n: parseInt(v[0], 10) || 0, m: v[1] != null ? parseInt(v[1], 10) : null }); }
     });
     const bar = /^[123]$/.test(opts.bar) ? opts.bar : '1';
     const tbar = /^[123]$/.test(opts.tbar) && opts.tbar !== bar ? opts.tbar : null;   // optional temp HP bar
@@ -119,8 +120,9 @@
         if (!m) { notSelected.push(p.id); return; }           // never touch unselected tokens
         const b = readBar(m, bar);
         if (cmd === '!msr-init') {
-          writeBar(m, bar, Math.max(0, p.n), Math.max(0, p.n));
-          results.push({ id: p.id, hp: p.n, max: p.n });
+          const max = Math.max(0, p.m != null && !isNaN(p.m) ? p.m : p.n, p.n);
+          writeBar(m, bar, Math.max(0, p.n), max);
+          results.push({ id: p.id, hp: p.n, max });
           return;
         }
         if (b.cur === null && opts.empty0 === '1') b.cur = 0;
