@@ -114,6 +114,8 @@ header .sp{flex:1}
 .wlist span{background:#1b1722;border-radius:6px;padding:3px 8px;font-size:13px}
 .wlist span.done{background:#1f4a32}
 .r20box.nohp .hpopt{display:none}
+#rollBtn.stop{background:linear-gradient(#e0565b,#a8373b);color:#fff}
+.mergesel{font-size:13px;padding:4px 6px;max-width:150px}
 .pullrow{display:none!important}#groups.r20 .pullrow{display:flex!important}
 .syncline{border-radius:8px;padding:6px 10px;margin:0 0 10px;font-size:13px;background:#1b1722;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .syncline.ok{background:#173323}.syncline.blocked,.syncline.fail{background:#3d1d1f;border:1px solid var(--fail)}.syncline.sending{background:#2b2617}
@@ -307,12 +309,17 @@ function renderSpell(){
   $('#r20Hp').checked=state.rules.r20Hp;$('#r20Bar').value=state.rules.r20Bar;$('#r20Dead').checked=state.rules.r20Dead;
   renderParts();renderR20();
 }
+function renderRollBtn(){
+  const b=$('#rollBtn'),waiting=!!state.pending;
+  b.textContent=waiting?'⏹ Stop reading Roll20 rolls':state.rules.roll20?'🎲 Start — then roll in Roll20':'🎲 Roll saves';
+  b.classList.toggle('stop',waiting);
+}
 function renderR20(){
   const on=state.rules.roll20;
   $('.r20box').classList.toggle('off',!on);
   $('.r20box').classList.toggle('nohp',!state.rules.r20Hp);
   $('#groups').classList.toggle('r20',on&&state.rules.r20Hp);
-  $('#rollBtn').textContent=on?'🎲 Start — then roll in Roll20':'🎲 Roll saves';
+  renderRollBtn();
   const st=$('#r20Status');
   if(!on){st.innerHTML='';return;}
   st.innerHTML=ext.state==='checking'?'Looking for Roll20…'
@@ -347,7 +354,11 @@ function bindSpell(){
   $('#parts').addEventListener('change',e=>{const i=e.target.dataset.p;if(i==null)return;s().parts[i][e.target.dataset.pf]=e.target.value;save();});
   $('#parts').addEventListener('click',e=>{const i=e.target.dataset.delpart;if(i==null)return;s().parts.splice(i,1);save();renderParts();});
   $('#addPart').addEventListener('click',()=>{s().parts.push({dice:'',type:''});save();renderParts();[...document.querySelectorAll('#parts input')].pop()?.focus();});
-  $('#rollBtn').addEventListener('click',doRoll);
+  // The same button stops listening for Roll20 dice while a mass save is waiting for them.
+  $('#rollBtn').addEventListener('click',()=>{
+    if(state.pending){state.pending=null;save();renderResults();toast('Stopped reading Roll20 rolls. Nothing was changed.');logEv('stop','stopped waiting for dice');return;}
+    doRoll();
+  });
 }
 
 // ---------- groups ----------
@@ -374,6 +385,7 @@ function groupHTML(g){
         <input type="number" data-e="temp" ${K(e.id+'x')} value="${e.temp}" title="Temporary HP" placeholder="temp" style="width:48px">
         <input type="number" data-e="amt" ${K(e.id+'a')} placeholder="amt" title="Amount" style="width:56px">
         <button class="small" data-act="hurt" title="Deal damage">−</button><button class="small" data-act="heal" title="Heal">+</button>
+        ${g.enemies.length>1?`<button class="small" data-act="split" title="Give this enemy its own card (for different modifiers)">⇱</button>`:''}
       </div></div>`;}).join('');
   return `<div class="group${closed.has(g.id)?' closed':''}" data-gid="${g.id}">
     <div class="ghead">
@@ -382,6 +394,7 @@ function groupHTML(g){
       <input class="gname" data-f="name" ${K('name')} value="${esc(g.name)}">
       <label class="alive">× <input type="number" data-f="count" ${K('count')} min="1" max="100" value="${g.count}" title="How many"></label>
       <span class="alive">${up}/${g.enemies.length} standing</span>
+      ${state.groups.length>1?`<select class="mergesel" data-merge title="Move all of this card’s enemies into another card"><option value="">Merge into…</option>${state.groups.filter(x=>x!==g).map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>`:''}
       <button class="icon" data-act="dup" title="Duplicate group">⧉</button>
       <button class="icon danger" data-act="delgroup" title="Delete group">✕</button>
     </div>
@@ -415,6 +428,33 @@ function groupHTML(g){
       </div>
     </div></div>`;
 }
+// Optional: one enemy can get its own card (copying the group's modifiers) when it needs different
+// pluses, and a card can be merged back into another. Enemies keep their name, HP and Roll20 link,
+// and a roll in progress follows them to their new card.
+function moveEnemy(e,from,to){
+  from.enemies=from.enemies.filter(x=>x!==e);to.enemies.push(e);
+  from.count=from.enemies.length;to.count=to.enemies.length;
+  for(const R of [state.last,state.pending])if(R)R.recs.forEach(r=>{if(r.eid===e.id)r.gid=to.id;});
+}
+function splitEnemy(g,e){
+  if(g.enemies.length<2){toast('That enemy already has its own card.');return;}
+  const name=label(g,e);if(!e.tname)e.tname=name;
+  const c=JSON.parse(JSON.stringify(g));c.id=uid();c.name=name;c.enemies=[];
+  state.groups.splice(state.groups.indexOf(g)+1,0,c);
+  moveEnemy(e,g,c);e.n=1;
+  save();recompute();
+  toast(`${name} has its own card now — change its modifiers there.`);
+}
+function mergeGroup(g,to){
+  g.enemies.slice().forEach(e=>{
+    if(!e.tname)e.tname=label(g,e);
+    e.n=to.enemies.reduce((m,x)=>Math.max(m,x.n),0)+1;
+    moveEnemy(e,g,to);
+  });
+  state.groups=state.groups.filter(x=>x!==g);
+  save();recompute();
+  toast(`Moved into ${to.name} — they use ${to.name}’s modifiers now.`);
+}
 function updateTargetCount(){
   const n=state.groups.reduce((a,g)=>a+g.enemies.filter(e=>e.target&&e.hp>0).length,0);
   $('#targetCount').textContent=n?`${n} enem${n===1?'y':'ies'} targeted`:'No enemies targeted';
@@ -440,6 +480,7 @@ function bindGroups(){
       save();recompute();return;
     }
     if(t.dataset.save){g.saves[t.dataset.save]=num(t.value);save();recompute();return;}
+    if(t.dataset.merge!=null){const to=findG(t.value);if(to)mergeGroup(g,to);return;}
     if(e&&t.dataset.e){
       const k=t.dataset.e;
       if(k==='target'){e.target=t.checked;save();updateTargetCount();return;}
@@ -456,6 +497,7 @@ function bindGroups(){
     const a=b.dataset.act;
     if(a==='toggle'){closed.toggle(g.id);b.closest('.group').classList.toggle('closed');return;}
     if(a==='pull'){pullTokens(g.id);return;}
+    if(a==='split'){splitEnemy(g,e);return;}
     if(a==='chip'){const d=b.dataset.type,cyc={undefined:'resist',resist:'immune',immune:'vuln',vuln:undefined};const n=cyc[g.dmg[d]];if(n)g.dmg[d]=n;else delete g.dmg[d];save();recompute();return;}
     if(a==='hurt'||a==='heal'){
       const amt=Math.max(0,num(b.closest('.enemy').querySelector('[data-e=amt]').value));if(!amt)return;
@@ -786,6 +828,7 @@ function undo(){
 }
 function renderResults(){
   const box=$('#results'),L=state.last,P=state.pending;
+  renderRollBtn();
   $('#undoBtn').hidden=!L||!!P;
   $('#history').innerHTML=state.log.filter(x=>x.text).map(x=>`<li>${esc(x.text)}</li>`).join('')||'<span class="muted">Nothing rolled yet.</span>';
   if(P){
