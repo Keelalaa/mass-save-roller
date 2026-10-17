@@ -58,7 +58,7 @@ header .sp{flex:1}
 .newcard-zone{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:98;width:min(420px,calc(100vw - 32px));border:2px dashed var(--gold);border-radius:12px;padding:20px;text-align:center;color:var(--gold2);background:#211c27ee;font-weight:700;box-shadow:0 6px 24px #000a}
 .newcard-zone.hot{border-color:var(--gold);color:var(--gold2);background:#2a2417}
 .dragghost{position:fixed;pointer-events:none;z-index:99;background:var(--panel2);border:1px solid var(--gold);color:var(--gold2);font-weight:700;padding:4px 10px;border-radius:6px;box-shadow:0 4px 14px #0008}
-.collapse{background:none;border:0;padding:2px 6px;font-size:16px;transition:transform .15s}
+.collapse{background:#181420;border:1px solid var(--line);border-radius:7px;padding:3px 9px;font-size:15px;line-height:1.2;transition:transform .15s}
 .group.closed .collapse{transform:rotate(-90deg)}
 .gname{font-weight:700;flex:1;min-width:120px;font-size:16px}
 .alive{font-size:13px;color:var(--muted)}
@@ -192,7 +192,7 @@ header .sp{flex:1}
 
   <section>
     <div class="panel">
-      <h2>Enemies <span class="sp"></span><button id="addGroup" class="primary small">+ Add enemy group</button></h2>
+      <h2>Enemies <span class="sp"></span><button id="toggleAll" class="small" title="Minimize or expand every card">Minimize all</button><button id="addGroup" class="primary small">+ Add enemy group</button></h2>
       <div class="hint">Each group is one kind of monster (e.g. 6 Goblins). Tick the enemies caught in the spell. Click a damage type to cycle: <span class="chip resist">resistant</span> <span class="chip immune">immune</span> <span class="chip vuln">vulnerable</span>.</div>
       <div id="groups"></div>
     </div>
@@ -281,7 +281,7 @@ function load(){
 function save(){try{localStorage.setItem(STORE_KEY,JSON.stringify(state));}catch(e){}if(typeof scheduleSync==='function')scheduleSync();}
 const closed=(()=>{let s=new Set();try{s=new Set(JSON.parse(localStorage.getItem(OPEN_KEY)||'[]'));}catch(e){}
   const persist=()=>{try{localStorage.setItem(OPEN_KEY,JSON.stringify([...s]));}catch(e){}};
-  return {has:k=>s.has(k),toggle:k=>{s.has(k)?s.delete(k):s.add(k);persist();}};})();
+  return {has:k=>s.has(k),toggle:k=>{s.has(k)?s.delete(k):s.add(k);persist();},set:(k,v)=>{v?s.add(k):s.delete(k);persist();}};})();
 
 const findG=id=>state.groups.find(g=>g.id===id);
 // Enemies taken from Roll20 tokens use the token's own name ("Cat 1", "Cat 2" when names repeat).
@@ -373,7 +373,7 @@ function renderGroups(){
   const fk=document.activeElement?.dataset?.k;
   box.innerHTML=state.groups.map(groupHTML).join('')||'<p class="muted">No enemies yet. Click <b>+ Add enemy group</b>.</p>';
   if(fk){const el=box.querySelector(`[data-k="${CSS.escape(fk)}"]`);if(el){el.focus();if(el.select&&el.type!=='checkbox')try{el.select();}catch(e){}}}
-  updateTargetCount();
+  updateTargetCount();renderToggleAll();
 }
 function groupHTML(g){
   const up=g.enemies.filter(e=>e.hp>0).length, K=f=>`data-k="${g.id}-${f}"`;
@@ -397,7 +397,7 @@ function groupHTML(g){
   return `<div class="group${closed.has(g.id)?' closed':''}" data-gid="${g.id}">
     <div class="ghead">
       <span class="handle" title="Drag to reorder">⠿</span>
-      <button class="collapse" data-act="toggle" title="Show/hide">▾</button>
+      <button class="collapse" data-act="toggle" title="Minimize / expand this card">▾</button>
       <input class="gname" data-f="name" ${K('name')} value="${esc(g.name)}">
       <label class="alive">× <input type="number" data-f="count" ${K('count')} min="0" max="100" value="${g.count}" title="How many"></label>
       <span class="alive">${up}/${g.enemies.length} standing</span>
@@ -468,6 +468,11 @@ function mergeGroup(g,to){
   save();recompute();
   toast(`Moved into ${to.name} — they use ${to.name}’s modifiers now.`);
 }
+function renderToggleAll(){
+  const b=$('#toggleAll');if(!b)return;
+  b.hidden=!state.groups.length;
+  b.textContent=state.groups.length&&state.groups.every(g=>closed.has(g.id))?'Expand all':'Minimize all';
+}
 function updateTargetCount(){
   const n=state.groups.reduce((a,g)=>a+g.enemies.filter(e=>e.target&&e.hp>0).length,0);
   $('#targetCount').textContent=n?`${n} enem${n===1?'y':'ies'} targeted`:'No enemies targeted';
@@ -508,7 +513,7 @@ function bindGroups(){
     const b=ev.target.closest('[data-act]');if(!b)return;
     const {g,e}=ctx(b);if(!g)return;
     const a=b.dataset.act;
-    if(a==='toggle'){closed.toggle(g.id);b.closest('.group').classList.toggle('closed');return;}
+    if(a==='toggle'){closed.toggle(g.id);b.closest('.group').classList.toggle('closed');renderToggleAll();return;}
     if(a==='pull'){pullTokens(g.id);return;}
     if(a==='split'){splitEnemy(g,e);return;}
     if(a==='chip'){const d=b.dataset.type,cyc={undefined:'resist',resist:'immune',immune:'vuln',vuln:undefined};const n=cyc[g.dmg[d]];if(n)g.dmg[d]=n;else delete g.dmg[d];save();recompute();return;}
@@ -585,6 +590,10 @@ function bindGroups(){
     if(dest!==from){const [g]=state.groups.splice(from,1);state.groups.splice(dest,0,g);save();renderGroups();}
   };
   box.addEventListener('pointerup',end);box.addEventListener('pointercancel',end);
+  $('#toggleAll').addEventListener('click',()=>{
+    const close=!state.groups.every(g=>closed.has(g.id));
+    state.groups.forEach(g=>closed.set(g.id,close));renderGroups();
+  });
   $('#addGroup').addEventListener('click',()=>{
     const g=newGroup();state.groups.push(g);save();renderGroups();
     const el=box.querySelector(`[data-gid="${g.id}"]`);el.scrollIntoView({behavior:'smooth',block:'center'});const n=el.querySelector('.gname');n.focus();n.select();
