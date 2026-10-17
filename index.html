@@ -382,8 +382,8 @@ function groupHTML(g){
       <div class="ectl">
         <input type="number" data-e="hp" ${K(e.id+'h')} value="${e.hp}" title="Current HP"><span class="muted">/</span>
         <input type="number" data-e="max" ${K(e.id+'m')} value="${e.max}" title="Max HP">
-        <input type="number" data-e="temp" ${K(e.id+'x')} value="${e.temp}" title="Temporary HP" placeholder="temp" style="width:48px">
-        <input type="number" data-e="amt" ${K(e.id+'a')} placeholder="amt" title="Amount" style="width:56px">
+        <input type="number" data-e="temp" ${K(e.id+'x')} value="${e.temp||''}" title="Temporary HP (optional) — soaks damage before real HP. Only kept on this page, not in Roll20." placeholder="temp HP" style="width:64px">
+        <input type="number" data-e="amt" ${K(e.id+'a')} placeholder="amount" title="Type an amount, then − to damage or + to heal" style="width:64px">
         <button class="small" data-act="hurt" title="Deal damage">−</button><button class="small" data-act="heal" title="Heal">+</button>
         ${g.enemies.length>1?`<button class="small" data-act="split" title="Give this enemy its own card (for different modifiers)">⇱</button>`:''}
       </div></div>`;}).join('');
@@ -417,7 +417,7 @@ function groupHTML(g){
       </div>
       <div class="lbl">Damage resistances</div>
       <div class="chips">${chips}</div>
-      <div class="lbl">Enemies <span style="text-transform:none">(current / max HP, temp HP)</span></div>
+      <div class="lbl">Enemies <span style="text-transform:none">(HP / max HP · temp HP · type an amount, then − or +)</span></div>
       <div class="enemies">${enemies}</div>
       <div class="gactions">
         <button class="small" data-act="all">Target all</button>
@@ -597,11 +597,13 @@ const ext={state:'checking',roll20Open:false,version:null,script:'unknown'};
 let pingTimer=null;
 // Two ways to reach Roll20: the "⚔️ Mass Save" bookmark (this page is then a window opened by the
 // Roll20 tab, reached through window.opener) or the older Chrome add-on (same window).
+// Messages to/from the bookmark link are tagged "msr-page2"/"msr-ext2": copies of the link from
+// before v2.0.4 only answer the old tags, so a stale copy still running in Roll20 can never
+// change HP a second time.
 const ROLL20_ORIGIN='https://app.roll20.net';
 function linkPost(msg){
-  msg=Object.assign({source:'msr-page'},msg);
-  try{if(window.opener&&!window.opener.closed)window.opener.postMessage(msg,ROLL20_ORIGIN);}catch(e){}
-  window.postMessage(msg,location.origin);
+  try{if(window.opener&&!window.opener.closed)window.opener.postMessage(Object.assign({},msg,{source:'msr-page2'}),ROLL20_ORIGIN);}catch(e){}
+  window.postMessage(Object.assign({},msg,{source:'msr-page'}),location.origin);
 }
 function pingExt(){
   clearTimeout(pingTimer);
@@ -611,9 +613,10 @@ function pingExt(){
 // The link drops if Roll20 is reloaded or closed; notice that instead of failing silently.
 setInterval(()=>{if(ext.direct&&(!window.opener||window.opener.closed)){ext.direct=false;ext.state='none';ext.roll20Open=false;renderR20();logEv('ext','roll20 window gone');}},3000);
 window.addEventListener('message',ev=>{
-  const d=ev.data;if(!d||d.source!=='msr-ext')return;
-  const fromRoll20=ev.origin===ROLL20_ORIGIN&&ev.source===window.opener;
-  if(ev.source!==window&&!fromRoll20)return;
+  const d=ev.data;if(!d)return;
+  const fromRoll20=d.source==='msr-ext2'&&ev.origin===ROLL20_ORIGIN&&ev.source===window.opener;
+  const fromAddon=d.source==='msr-ext'&&ev.source===window;
+  if(!fromRoll20&&!fromAddon)return;
   if(d.type==='pong'){const was=ext.state+ext.roll20Open;ext.state='ok';ext.roll20Open=d.roll20Open;ext.version=d.version;
     if(d.direct){ext.direct=true;ext.script='ok';}
     renderR20();checkScript();if(was!==ext.state+ext.roll20Open)logEv('ext',`connected v${d.version}${d.direct?' (bookmark)':''}, roll20 open: ${d.roll20Open}`);}
