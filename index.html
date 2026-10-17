@@ -163,6 +163,7 @@ header .sp{flex:1}
         <label><input type="checkbox" id="r20On"> <b>Roll the d20s in Roll20</b></label>
         <label class="sub"><input type="checkbox" id="r20Hp"> Update token HP in Roll20</label>
         <label class="sub hpopt">HP is on bar <select id="r20Bar"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+        <label class="sub hpopt">Temp HP is on bar <select id="r20TBar"><option value="">Not used</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
         <label class="sub hpopt"><input type="checkbox" id="r20Dead"> Mark tokens at 0 HP as dead</label>
         <div id="r20Status" class="hint"></div>
         <details class="hint"><summary>How to link Roll20 (get the bookmark)</summary>
@@ -269,7 +270,7 @@ function defaultState(){
   return {
     spell:{name:'',dc:15,ability:'dex',onSuccess:'half',isSpell:true,perTarget:false,parts:[{dice:'',type:''}]},
     groups:[],
-    custom:[],rules:{nat:false,roll20:false,roll20Dmg:false,r20Hp:true,r20Bar:'1',r20Dead:true},last:null,pending:null,log:[]
+    custom:[],rules:{nat:false,roll20:false,roll20Dmg:false,r20Hp:true,r20Bar:'1',r20TBar:'',r20Dead:true},last:null,pending:null,log:[]
   };
 }
 let state;
@@ -278,7 +279,7 @@ function load(){
     (state.spell.parts||[]).forEach(p=>{if(!/^\d*$/.test(String(p.dice).trim()))p.dice='';});return;}}catch(e){}
   state=defaultState();
 }
-function save(){try{localStorage.setItem(STORE_KEY,JSON.stringify(state));}catch(e){}if(typeof scheduleSync==='function')scheduleSync();}
+function save(){if(state.pending&&typeof syncPending==='function')syncPending();try{localStorage.setItem(STORE_KEY,JSON.stringify(state));}catch(e){}if(typeof scheduleSync==='function')scheduleSync();}
 const closed=(()=>{let s=new Set();try{s=new Set(JSON.parse(localStorage.getItem(OPEN_KEY)||'[]'));}catch(e){}
   const persist=()=>{try{localStorage.setItem(OPEN_KEY,JSON.stringify([...s]));}catch(e){}};
   return {has:k=>s.has(k),toggle:k=>{s.has(k)?s.delete(k):s.add(k);persist();},set:(k,v)=>{v?s.add(k):s.delete(k);persist();}};})();
@@ -312,9 +313,10 @@ function renderSpell(){
   $('#spIsSpell').checked=s.isSpell;
   $('#natRule').checked=state.rules.nat;
   $('#r20On').checked=state.rules.roll20;
-  $('#r20Hp').checked=state.rules.r20Hp;$('#r20Bar').value=state.rules.r20Bar;$('#r20Dead').checked=state.rules.r20Dead;
+  $('#r20Hp').checked=state.rules.r20Hp;$('#r20Bar').value=state.rules.r20Bar;$('#r20TBar').value=state.rules.r20TBar||'';$('#r20Dead').checked=state.rules.r20Dead;
   renderParts();renderR20();
 }
+let rollBtnAt=0;   // a quick double-click must not stop and restart straight away
 function renderRollBtn(){
   const b=$('#rollBtn'),waiting=!!state.pending;
   b.textContent=waiting?'⏹ Stop reading Roll20 rolls':state.rules.roll20?'🎲 Start — then roll in Roll20':'🎲 Roll saves';
@@ -351,7 +353,13 @@ function bindSpell(){
   $('#natRule').addEventListener('change',e=>{state.rules.nat=e.target.checked;save();recompute();});
   $('#r20On').addEventListener('change',e=>{state.rules.roll20=e.target.checked;save();renderR20();if(e.target.checked)pingExt();});
   $('#r20Hp').addEventListener('change',e=>{state.rules.r20Hp=e.target.checked;save();renderR20();checkScript(true);});
-  $('#r20Bar').addEventListener('change',e=>{state.rules.r20Bar=e.target.value;save();});
+  $('#r20Bar').addEventListener('change',e=>{state.rules.r20Bar=e.target.value;
+    if(state.rules.r20TBar===e.target.value){state.rules.r20TBar='';$('#r20TBar').value='';toast('HP and temp HP can’t share a bar — temp HP set to “Not used”.');}
+    save();});
+  $('#r20TBar').addEventListener('change',e=>{
+    if(e.target.value&&e.target.value===state.rules.r20Bar){e.target.value=state.rules.r20TBar||'';toast('That’s the HP bar — pick a different bar for temp HP.');return;}
+    state.rules.r20TBar=e.target.value;save();
+    if(e.target.value)toast('Use selected Roll20 tokens again to read their temp HP.');});
   $('#r20Dead').addEventListener('change',e=>{state.rules.r20Dead=e.target.checked;save();});
   $('#r20Status').addEventListener('click',e=>{if(e.target.dataset.setup!=null){window.postMessage({source:'msr-page',type:'setup'},location.origin);toast('Opening your game’s Mod Scripts page — click “Install it for me” in the box there.');}
     else if(e.target.dataset.recheck!=null)checkScript(true);});
@@ -362,6 +370,7 @@ function bindSpell(){
   $('#addPart').addEventListener('click',()=>{s().parts.push({dice:'',type:''});save();renderParts();[...document.querySelectorAll('#parts input')].pop()?.focus();});
   // The same button stops listening for Roll20 dice while a mass save is waiting for them.
   $('#rollBtn').addEventListener('click',()=>{
+    if(Date.now()-rollBtnAt<800)return;rollBtnAt=Date.now();
     if(state.pending){state.pending=null;save();renderResults();toast('Stopped reading Roll20 rolls. Nothing was changed.');logEv('stop','stopped waiting for dice');return;}
     doRoll();
   });
@@ -501,7 +510,7 @@ function bindGroups(){
     if(t.dataset.merge!=null){const to=findG(t.value);if(to)mergeGroup(g,to);return;}
     if(e&&t.dataset.e){
       const k=t.dataset.e;
-      if(k==='target'){e.target=t.checked;save();updateTargetCount();return;}
+      if(k==='target'){e.target=t.checked;save();updateTargetCount();if(state.pending)renderResults();return;}
       if(k==='amt')return;
       e[k]=Math.max(0,num(t.value));
       if(k==='max'&&e.hp>e.max)e.hp=e.max;
@@ -674,11 +683,27 @@ window.addEventListener('message',ev=>{
     renderR20();checkScript();if(was!==ext.state+ext.roll20Open)logEv('ext',`connected v${d.version}${d.direct?' (bookmark)':''}, roll20 open: ${d.roll20Open}`);}
   else if(d.type==='stale'){ext.state='stale';renderR20();logEv('ext','stale (add-on reloaded)');}
   else if(d.type==='roll'){ext.state='ok';ext.roll20Open=true;renderR20();onRoll20Roll(d.roll);}
+  else if(d.type==='tokenchange'){onTokenChange(d.tok);}
   else if(d.type==='cmdack'){if(!d.ok){const w=r20wait.get(d.req);if(w){r20wait.delete(d.req);clearTimeout(w.timer);w.rej(new Error(d.error||'failed'));}}}
   else if(d.type==='reply'&&d.data){const w=r20wait.get(d.data.req);if(w){r20wait.delete(d.data.req);clearTimeout(w.timer);w.res(d.data);}}
   else if(d.type==='setupack'){if(!d.ok)toast('Couldn’t find your game’s ID — open your game’s Settings → Mod (API) Scripts and the setup box will appear there.');}
 });
 window.addEventListener('focus',()=>{if(state.rules.roll20){if(ext.state!=='stale')ext.state=ext.state==='ok'?'ok':'checking';pingExt();}});
+// While waiting for Roll20 dice, the list follows the ticked enemies: untick one and it drops out
+// (with any dice it already had), tick one and it joins.
+function syncPending(){
+  const P=state.pending;if(!P)return;
+  const byE=new Map(P.recs.map(r=>[r.eid,r])),recs=[];
+  state.groups.forEach(g=>g.enemies.forEach(e=>{
+    if(!e.target||e.hp<=0)return;
+    const r=byE.get(e.id);
+    if(r){r.gid=g.id;recs.push(r);return;}
+    recs.push({gid:g.id,eid:e.id,d20:[],need:rollMode(g,P.spell)==='normal'?1:2,bonusF:g.bonus,bonus:g.bonus.trim()?rollDice(g.bonus):null,dmg:null,lrUsed:false});
+  }));
+  P.recs=recs;
+  if(!recs.length){state.pending=null;setTimeout(()=>{renderResults();toast('No enemies ticked — stopped waiting for dice.');},0);return;}
+  if(pendingDone(P))setTimeout(()=>{if(state.pending===P&&pendingDone(P))startResult(P);},0);
+}
 const pendingDone=P=>P.recs.every(r=>r.d20.length>=r.need)&&(!P.dmg||P.dmg.every(p=>p.total!=null));
 const seenRolls=new Map();
 function onRoll20Roll(roll){
@@ -744,7 +769,7 @@ function checkScript(force){
 }
 async function pullTokens(gid){
   try{
-    const d=await r20Send(`!msr-sel {req} bar=${state.rules.r20Bar}`);
+    const d=await r20Send(`!msr-sel {req} bar=${state.rules.r20Bar}`+(tempBar()?` tbar=${tempBar()}`:''));
     ext.script='ok';renderR20();
     logEv('tokens',`selected ${(d.tokens||[]).length}: ${(d.tokens||[]).map(t=>t.name+'='+t.hp+'/'+t.max).join(', ')}`);
     if(!d.tokens||!d.tokens.length){toast('Select this group’s monster tokens in Roll20 first, then click this again.');return;}
@@ -767,7 +792,7 @@ function mergeTokens(tokens,g){
     // Image tokens often have an empty HP bar: they get "HP each" and Roll20's bar is filled in.
     const hasHp=t.hp!=null;if(!hasHp)noHp++;
     const hp=hasHp?Math.max(0,t.hp):rollHp(g.hp);
-    return {id:prev?prev.id:uid(),n:i+1,tname:String(t.name||'').trim(),hp,max:Math.max(t.max||0,hp),temp:prev?prev.temp:0,lrLeft:prev?prev.lrLeft:g.lr,
+    return {id:prev?prev.id:uid(),n:i+1,tname:String(t.name||'').trim(),hp,max:Math.max(t.max||0,hp),temp:t.temp!=null?Math.max(0,t.temp):(prev?prev.temp:0),syncedTemp:t.temp!=null?Math.max(0,t.temp):null,lrLeft:prev?prev.lrLeft:g.lr,
       target:true,tokenId:t.id,synced:hasHp?hp:null,needInit:!hasHp,noBar:false,blocked:false};
   });
   g.count=g.enemies.length;
@@ -796,29 +821,67 @@ async function runSync(retry){
     }catch(err){sync.busy=false;sync.state='fail';sync.text='❌ '+r20Problem(err);save();renderSync();return;}
     sync.busy=false;
   }
+  // HP (and temp HP, if a temp bar is chosen) are sent as changes since Roll20 last agreed.
+  const tbar=tempBar();
   const list=tokenEnemies().filter(({e})=>e.synced!=null&&e.hp!==e.synced&&(retry||!e.blocked));
+  const tlist=tbar?tokenEnemies().filter(({e})=>e.syncedTemp!=null&&(e.temp||0)!==e.syncedTemp&&(retry||!e.blocked)):[];
   const stillBlocked=tokenEnemies().filter(({e})=>e.blocked).length;
-  if(!list.length&&stillBlocked){sync.state='blocked';sync.text=`${stillBlocked} token${stillBlocked===1?' wasn’t':'s weren’t'} selected in Roll20, so NOT changed. Select ${stillBlocked===1?'it':'them'} and press Retry.`;save();renderSync();return;}
-  if(!list.length&&inits.length){sync.state='ok';sync.text=`✅ Set HP on ${inits.length} token${inits.length===1?'':'s'} in Roll20.`;save();renderSync();return;}
-  if(!list.length){if(retry){sync.state='ok';sync.text='Roll20 tokens are up to date.';renderSync();}return;}
-  sync.busy=true;sync.state='sending';sync.text=`Updating ${list.length} token${list.length===1?'':'s'} in Roll20…`;renderSync();
-  const sent=list.map(({e})=>({e,want:e.hp,delta:e.synced-e.hp}));
+  const nothing=!list.length&&!tlist.length;
+  if(nothing&&stillBlocked){sync.state='blocked';sync.text=`${stillBlocked} token${stillBlocked===1?' wasn’t':'s weren’t'} selected in Roll20, so NOT changed. Select ${stillBlocked===1?'it':'them'} and press Retry.`;save();renderSync();return;}
+  if(nothing&&inits.length){sync.state='ok';sync.text=`✅ Set HP on ${inits.length} token${inits.length===1?'':'s'} in Roll20.`;save();renderSync();return;}
+  if(nothing){if(retry){sync.state='ok';sync.text='Roll20 tokens are up to date.';renderSync();}return;}
+  const count=new Set([...list,...tlist].map(x=>x.e)).size;
+  sync.busy=true;sync.state='sending';sync.text=`Updating ${count} token${count===1?'':'s'} in Roll20…`;renderSync();
+  const ok=new Set(),blocked=new Set();
+  const apply=async(items,bar,extra,cur,base,setBase,what)=>{
+    if(!items.length)return;
+    const sent=items.map(({e})=>({e,want:cur(e),delta:base(e)-cur(e)}));
+    sent.forEach(x=>inflight.set(x.e.tokenId+what,x.want));
+    try{
+      const d=await r20Send(`!msr-dmg {req} bar=${bar} ${extra} `+sent.map(x=>`${x.e.tokenId}:${x.delta}`).join(' '));
+      const refused=new Set([...(d.notSelected||[]),...(d.missing||[]),...(d.results||[]).filter(r=>r.skipped).map(r=>r.id)]);
+      sent.forEach(x=>{if(refused.has(x.e.tokenId)){x.e.blocked=true;blocked.add(x.e);}else{setBase(x.e,x.want);ok.add(x.e);}});
+      logEv('sync',`${what}: sent ${sent.map(x=>x.delta).join(',')} → refused ${sent.filter(x=>refused.has(x.e.tokenId)).length}`);
+    }finally{sent.forEach(x=>inflight.delete(x.e.tokenId+what));}
+  };
   try{
-    const d=await r20Send(`!msr-dmg {req} bar=${state.rules.r20Bar} dead=${state.rules.r20Dead?1:0} `+sent.map(x=>`${x.e.tokenId}:${x.delta}`).join(' '));
+    await apply(list,state.rules.r20Bar,`dead=${state.rules.r20Dead?1:0}`,e=>e.hp,e=>e.synced,(e,v)=>{e.synced=v;},'hp');
+    await apply(tlist,tbar,'dead=0 empty0=1',e=>e.temp||0,e=>e.syncedTemp,(e,v)=>{e.syncedTemp=v;},'temp');
     ext.script='ok';
-    const refused=new Set([...(d.notSelected||[]),...(d.missing||[])]);
-    const skipped=new Set((d.results||[]).filter(r=>r.skipped).map(r=>r.id));
-    let ok=0;const blockedNames=[];
-    sent.forEach(x=>{
-      if(refused.has(x.e.tokenId)||skipped.has(x.e.tokenId)){x.e.blocked=true;blockedNames.push(x.e);}
-      else{x.e.synced=x.e.synced-x.delta;x.e.blocked=false;ok++;}
-    });
-    logEv('sync',`sent ${sent.map(x=>x.delta).join(',')} → ok ${ok}, refused ${blockedNames.length}, missing ${(d.missing||[]).length}`);
-    if(blockedNames.length){sync.state='blocked';sync.text=`${ok?`Updated ${ok} in Roll20. `:''}${blockedNames.length} token${blockedNames.length===1?' wasn’t':'s weren’t'} selected in Roll20, so ${blockedNames.length===1?'it was':'they were'} NOT changed. Select ${blockedNames.length===1?'it':'them'} and press Retry.`;}
-    else{sync.state='ok';sync.text=`✅ Updated ${ok} token${ok===1?'':'s'} in Roll20.`;}
+    ok.forEach(e=>{if(!blocked.has(e))e.blocked=false;});
+    const good=[...ok].filter(e=>!blocked.has(e)).length;
+    if(blocked.size){sync.state='blocked';sync.text=`${good?`Updated ${good} in Roll20. `:''}${blocked.size} token${blocked.size===1?' wasn’t':'s weren’t'} selected in Roll20, so ${blocked.size===1?'it was':'they were'} NOT changed. Select ${blocked.size===1?'it':'them'} and press Retry.`;}
+    else{sync.state='ok';sync.text=`✅ Updated ${good} token${good===1?'':'s'} in Roll20.`;}
   }catch(err){sync.state='fail';sync.text='❌ '+r20Problem(err);}
   sync.busy=false;save();renderSync();
   if(sync.again){sync.again=false;runSync();}
+}
+const inflight=new Map();   // values this page is writing to Roll20 right now (so its echo isn't "news")
+function tempBar(){const t=state.rules.r20TBar;return /^[123]$/.test(t)&&t!==state.rules.r20Bar?t:null;}
+// Roll20 reports token edits made there (renames, HP or temp HP typed into a bar): mirror them here.
+function onTokenChange(t){
+  if(!t||!t.id)return;
+  let changed=false,external=false;
+  const tbar=tempBar();
+  state.groups.forEach(g=>g.enemies.forEach(e=>{
+    if(e.tokenId!==t.id)return;
+    const nm=String(t.name||'').trim();
+    if(nm&&nm!==e.tname){e.tname=nm;changed=true;}
+    const b=t.bars&&t.bars[state.rules.r20Bar];
+    if(b&&b.v!=null&&!e.needInit&&e.synced!=null){
+      if(inflight.get(t.id+'hp')===b.v)e.synced=b.v;
+      else if(b.v!==e.synced){e.hp=Math.max(0,b.v);e.synced=b.v;external=true;}
+      if(b.max>0&&b.max!==e.max){e.max=b.max;changed=true;}
+    }
+    const tb=tbar&&t.bars&&t.bars[tbar];
+    if(tb&&e.syncedTemp!=null){
+      const v=tb.v==null?0:tb.v;
+      if(inflight.get(t.id+'temp')===v)e.syncedTemp=v;
+      else if(v!==e.syncedTemp){e.temp=Math.max(0,v);e.syncedTemp=v;external=true;}
+    }
+  }));
+  if(external){lockLast();logEv('roll20-edit',`token changed in Roll20 (${t.name||t.id})`);}
+  if(changed||external){save();renderGroups();renderResults();}
 }
 function renderSync(){
   const el=$('#syncLine');if(!el)return;
@@ -894,7 +957,7 @@ function renderResults(){
       `<div style="margin-top:8px"><b>Damage:</b> ${P.dmg.map(p=>p.total==null?`waiting for <b>${esc(p.dice)}</b> ${esc(p.type)}`:`<span class="ok">${p.total} ${esc(p.type)}</span>`).join(' · ')}</div>`:'';
     box.innerHTML=`<div class="waiting">
       <h3>📡 Waiting for your Roll20 dice — DC ${P.spell.dc} ${P.spell.ability.toUpperCase()} save</h3>
-      <div>In Roll20 type <b>/r ${need}d20</b>${two?` <span class="muted">(${two} enem${two===1?'y has':'ies have'} advantage/disadvantage, so ${two===1?'it needs':'they need'} 2 dice)</span>`:''}. Only the single dice are used — Roll20's total doesn't matter. You can also roll them a few at a time.</div>
+      <div>In Roll20 type <b>/r ${need-got}d20</b>${got?` <span class="muted">(${got} already in)</span>`:''}${two?` <span class="muted">(${two} enem${two===1?'y has':'ies have'} advantage/disadvantage, so ${two===1?'it needs':'they need'} 2 dice)</span>`:''}. Only the single dice are used — Roll20's total doesn't matter. You can also roll them a few at a time.</div>
       <div class="prog" style="margin-top:6px">${got} / ${need} d20s</div>
       <div class="wlist">${names}</div>${dmgLine}
       <div class="row"><button class="small" data-pact="fill">Roll the rest here</button><button class="small danger" data-pact="cancel">Cancel</button></div>
