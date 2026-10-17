@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mass Save Roller — Start</title>
+<style>
+:root{--bg:#15121a;--panel:#211c27;--line:#3b3345;--text:#ece6f2;--muted:#a69cb3;--gold:#d6ad55;--gold2:#f0cf86}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:640px;margin:0 auto;padding:28px 16px 48px}
+h1{color:var(--gold2);margin:0 0 6px;font-size:26px}
+p{margin:6px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin:18px 0}
+.card h2{margin:0 0 10px;font-size:18px;color:var(--gold2)}
+.btn{display:block;text-align:center;background:linear-gradient(#e2bb63,#b98d34);color:#1b1408;font-weight:800;font-size:18px;padding:14px;border-radius:10px;text-decoration:none;margin:10px 0}
+.btn.alt{background:#2a2431;color:var(--text);border:1px solid var(--gold)}
+ol{padding-left:22px;margin:8px 0}li{margin:6px 0}
+code{background:#181420;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:14px;user-select:all}
+.muted{color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<main>
+  <h1>⚔️ Mass Save Roller</h1>
+  <p>Roll saving throws for a whole pile of monsters at once. You type the DC, the modifiers and the damage — it does the rest.</p>
+
+  <div class="card">
+    <h2>Just want the website?</h2>
+    <a class="btn" href="/">Open the website</a>
+    <p class="muted">Works on its own — no add-on needed if you roll on the website.</p>
+  </div>
+
+  <div class="card">
+    <h2>Using it with Roll20 (one-time setup, ~1 minute)</h2>
+    <a class="btn alt" href="/roll20-addon.zip" download>⬇ Download the Roll20 add-on</a>
+    <ol>
+      <li>Open the downloaded file and drag the <b>roll20-addon</b> folder onto your Desktop (or anywhere you'll keep it).</li>
+      <li>In Chrome, open <code>chrome://extensions</code> <span class="muted">(copy it into the address bar)</span>.</li>
+      <li>Turn on <b>Developer mode</b> (top-right switch).</li>
+      <li>Click <b>Load unpacked</b> and pick the <b>roll20-addon</b> folder.</li>
+      <li>Open your Roll20 game, then <a href="/" style="color:var(--gold2)">the website</a>. Tick <b>Roll the d20s in Roll20</b>.</li>
+      <li>First time only: the website shows <b>Set it up (one time)</b> — click it, then click <b>Install it for me</b> on the Roll20 page that opens.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>How a mass save goes</h2>
+    <ol>
+      <li>In Roll20, select the monster tokens caught in the spell.</li>
+      <li>On the website click <b>⬇ Get selected tokens</b>, type their save modifiers (once), the DC and the damage.</li>
+      <li>Click <b>Start</b>, then in Roll20 type <code>/r 8d20</code> (one d20 per monster).</li>
+      <li>Done — passes and fails are worked out and the selected tokens' HP goes down in Roll20. Tokens you didn't select are never touched.</li>
+    </ol>
+  </div>
+</main>
+</body>
+</html>

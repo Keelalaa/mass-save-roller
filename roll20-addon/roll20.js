@@ -71,6 +71,9 @@
   if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.id) return;
 
   const loadedAt = Date.now();
+  // Problems are sent to the website's private log so they can be looked into remotely.
+  const logEv = (ev, msg) => { try { chrome.runtime.sendMessage({ type: 'msr-log', ev, msg: String(msg) }, () => void chrome.runtime.lastError); } catch (e) {} };
+  setTimeout(() => logEv('roll20-tab', 'loaded; chat box ' + (document.querySelector('#textchat-input textarea') ? 'found' : 'NOT found')), 5000);
   const seen = new Set();
   const send = (id, roll) => {
     try {
@@ -79,7 +82,22 @@
       console.log(TAG, 'sent', roll.formula, roll.dice.map(d => 'd' + d.sides + ':' + d.value).join(' '));
     } catch (e) { console.warn(TAG, 'could not send roll', e); }
   };
+  // Replies from the Mass Save Link Mod script arrive as hidden GM whispers: "MSR-<KIND> <data>".
+  const handleReply = msg => {
+    const m = /MSR-(PONG|SEL|DMG)\s+(\S+)/.exec(msg.textContent || '');
+    if (!m) return false;
+    msg.style.display = 'none';
+    const key = 'r:' + (msg.getAttribute('data-messageid') || m[2].slice(0, 120));
+    if (seen.has(key)) return true;
+    seen.add(key);
+    try {
+      const data = JSON.parse(decodeURIComponent(m[2]));
+      chrome.runtime.sendMessage({ type: 'msr-reply', kind: m[1], data }, () => void chrome.runtime.lastError);
+    } catch (e) { console.warn(TAG, 'bad reply from the Mod script', e); logEv('bad-reply', m[1] + ' ' + m[2].slice(0, 200)); }
+    return true;
+  };
   const handle = msg => {
+    if (handleReply(msg)) return;
     const key = msg.getAttribute('data-messageid') || msg;
     if (seen.has(key) || !isMine(msg)) return;
     const rolls = parseMessage(msg);
@@ -99,5 +117,35 @@
       [60, 400, 1200].forEach(ms => setTimeout(() => handle(msg), ms));
     }));
   }).observe(document.body, { childList: true, subtree: true });
+
+  // Sends a "!msr-..." command through the chat box. "!" commands go to the Mod script and are
+  // never shown in chat. Whatever the GM had half-typed is put back afterwards.
+  function sendChatText(text) {
+    const ta = document.querySelector('#textchat-input textarea');
+    if (!ta) { logEv('no-chatbox', text.split(' ')[0]); return false; }
+    const btn = document.querySelector('#textchat-input button, #textchat-input .btn');
+    const old = ta.value;
+    ta.value = text;
+    if (btn) btn.click();
+    else ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    setTimeout(() => { if (!ta.value || ta.value === text) ta.value = old; }, 50);
+    return true;
+  }
+  function campaignId() {
+    for (const s of document.querySelectorAll('script:not([src])')) {
+      const m = /campaign_id\s*=\s*["']?(\d+)/.exec(s.textContent);
+      if (m) return m[1];
+    }
+    for (const a of document.querySelectorAll('a[href*="/campaigns/"]')) {
+      const m = /\/campaigns\/\w+\/(\d+)/.exec(a.getAttribute('href'));
+      if (m) return m[1];
+    }
+    return null;
+  }
+  window.__msrChat = { sendChatText, campaignId, handleReply };
+  chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+    if (msg && msg.type === 'msr-cmd') reply({ ok: sendChatText(msg.text) });
+    else if (msg && msg.type === 'msr-campaign') reply({ id: campaignId() });
+  });
   console.log(TAG, 'watching Roll20 chat for your rolls');
 })();
