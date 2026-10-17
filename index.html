@@ -176,10 +176,14 @@ header .sp{flex:1}
       </div>
       <button id="rollBtn" class="primary big">🎲 Roll saves</button>
       <div id="targetCount" class="hint" style="text-align:center"></div>
+      <div class="row pasterow">
+        <input id="pasteDice" class="grow" placeholder="Already rolled? Paste or type the d20s, e.g. 17 5 6 1" title="Paste Roll20's result line (like: rolling 4d20 ( 17 + 5 + 6 + 1 ) = 29) or just type the numbers">
+        <button id="pasteBtn" class="small">Use these</button>
+      </div>
     </div>
 
     <div class="panel">
-      <h2>Results <span class="sp"></span><button id="undoBtn" class="small" hidden>↩ Undo roll</button></h2>
+      <h2>Results <span class="sp"></span><button id="undoBtn" class="small" hidden>↩ Undo roll</button><button id="redoBtn" class="small" hidden>↪ Redo roll</button></h2>
       <div id="syncLine" hidden></div>
       <div id="results"></div>
     </div>
@@ -610,12 +614,12 @@ function bindGroups(){
 }
 
 // ---------- rolling ----------
-function doRoll(){
+function doRoll(forceWait){
   const sp=state.spell;
   const parts=sp.parts.filter(p=>String(p.dice).trim());
   for(const p of parts)if(!parseDice(p.dice).ok){toast(`Can't read the damage “${p.dice}”. Use something like 8d6 or 3d8+4.`);return;}
   for(const g of state.groups)if(g.bonus.trim()&&!parseDice(g.bonus).ok){toast(`Can't read “${g.bonus}” in Extra to saves for ${g.name}.`);return;}
-  const r20=state.rules.roll20, r20Dmg=false, perTarget=false;
+  const r20=state.rules.roll20||forceWait===true, r20Dmg=false, perTarget=false;
   const recs=[];
   for(const g of state.groups)for(const e of g.enemies){
     if(!e.target||e.hp<=0)continue;
@@ -630,7 +634,7 @@ function doRoll(){
   if(r20){
     state.pending={id:uid(),spell,dmg,recs};save();renderResults();
     $('#results').scrollIntoView({behavior:'smooth',block:'start'});
-    if(ext.state!=='ok')toast('Roll20 add-on not connected — rolls from Roll20 can’t reach this page.');
+    if(ext.state!=='ok'&&forceWait!==true)toast('Not linked to Roll20 — click the ⚔️ Mass Save bookmark in Roll20, or paste your dice in the box under Start.');
     return;
   }
   startResult({id:uid(),spell,dmg,recs});
@@ -649,7 +653,7 @@ function startResult(R){
     delete rec.need;rec.before={hp:e.hp,temp:e.temp,lrLeft:e.lrLeft};return true;
   });
   if(R.dmg)R.dmg.forEach(p=>{if(p.total==null)Object.assign(p,rollDice(p.dice));});
-  state.last={id:R.id,spell:R.spell,dmg:R.dmg,recs:R.recs,locked:false};state.pending=null;
+  state.last={id:R.id,spell:R.spell,dmg:R.dmg,recs:R.recs,locked:false};state.pending=null;state.redo=null;
   state.log.unshift({id:R.id,text:''});state.log.length=Math.min(state.log.length,30);
   recompute();
 }
@@ -705,6 +709,23 @@ function syncPending(){
   if(pendingDone(P))setTimeout(()=>{if(state.pending===P&&pendingDone(P))startResult(P);},0);
 }
 const pendingDone=P=>P.recs.every(r=>r.d20.length>=r.need)&&(!P.dmg||P.dmg.every(p=>p.total!=null));
+// Dice typed or pasted by hand (e.g. Roll20 rolled before Start was pressed). Takes the numbers
+// inside "( ... )" when there are any — that's where Roll20 lists the single dice — ignoring
+// things like "4d20" and the "= 29" total.
+function parsePastedD20(text){
+  const s=String(text||'');
+  const groups=[...s.matchAll(/\(([^()]*)\)/g)].map(m=>m[1]);
+  const src=(groups.length?groups.join(' '):s.replace(/=.*$/,'')).replace(/\d*d\d+/gi,' ');
+  return (src.match(/\d+/g)||[]).map(Number).filter(n=>n>=1&&n<=20);
+}
+function usePasted(){
+  const inp=$('#pasteDice'),dice=parsePastedD20(inp.value);
+  if(!dice.length){toast('No d20 numbers (1–20) found in that.');return;}
+  if(!state.pending){doRoll(true);if(!state.pending)return;}
+  logEv('pasted',dice.join(','));
+  onRoll20Roll({id:'paste:'+uid(),dice:dice.map(v=>({sides:20,value:v})),formula:'typed in'});
+  inp.value='';
+}
 const seenRolls=new Map();
 function onRoll20Roll(roll){
   if(!roll||!Array.isArray(roll.dice))return;
@@ -787,6 +808,9 @@ function mergeTokens(tokens,g){
   state.groups.forEach(x=>{x.enemies.forEach(e=>{if(selIds.has(e.tokenId))old.set(e.tokenId,e);});if(x!==g){x.enemies=x.enemies.filter(e=>!selIds.has(e.tokenId));x.count=x.enemies.length;}});
   const lost=[...old.values()].filter(e=>selIds.has(e.tokenId)&&e.synced!=null&&e.hp!==e.synced).length;
   let noHp=0;
+  // Order by position on the map: left → right (higher one first when level), so "Cat 1" is the
+  // leftmost and dice from "/r 4d20" are handed out in that order.
+  tokens=tokens.slice().sort((a,b)=>Math.abs((a.x||0)-(b.x||0))>8?(a.x||0)-(b.x||0):(a.y||0)-(b.y||0));
   g.enemies=tokens.map((t,i)=>{
     const prev=old.get(t.id);
     // Image tokens often have an empty HP bar: they get "HP each" and Roll20's bar is filled in.
@@ -827,7 +851,7 @@ async function runSync(retry){
   const tlist=tbar?tokenEnemies().filter(({e})=>e.syncedTemp!=null&&(e.temp||0)!==e.syncedTemp&&(retry||!e.blocked)):[];
   const stillBlocked=tokenEnemies().filter(({e})=>e.blocked).length;
   const nothing=!list.length&&!tlist.length;
-  if(nothing&&stillBlocked){sync.state='blocked';sync.text=`${stillBlocked} token${stillBlocked===1?' wasn’t':'s weren’t'} selected in Roll20, so NOT changed. Select ${stillBlocked===1?'it':'them'} and press Retry.`;save();renderSync();return;}
+  if(nothing&&stillBlocked){sync.state='blocked';sync.text=`Not selected in Roll20, so NOT changed: ${tokenEnemies().filter(({e})=>e.blocked).map(({e})=>enemyLabel(e)).join(', ')}. Select ${stillBlocked===1?'it':'them'} and press Retry.`;save();renderSync();return;}
   if(nothing&&inits.length){sync.state='ok';sync.text=`✅ Set HP on ${inits.length} token${inits.length===1?'':'s'} in Roll20.`;save();renderSync();return;}
   if(nothing){if(retry){sync.state='ok';sync.text='Roll20 tokens are up to date.';renderSync();}return;}
   const count=new Set([...list,...tlist].map(x=>x.e)).size;
@@ -850,12 +874,13 @@ async function runSync(retry){
     ext.script='ok';
     ok.forEach(e=>{if(!blocked.has(e))e.blocked=false;});
     const good=[...ok].filter(e=>!blocked.has(e)).length;
-    if(blocked.size){sync.state='blocked';sync.text=`${good?`Updated ${good} in Roll20. `:''}${blocked.size} token${blocked.size===1?' wasn’t':'s weren’t'} selected in Roll20, so ${blocked.size===1?'it was':'they were'} NOT changed. Select ${blocked.size===1?'it':'them'} and press Retry.`;}
+    if(blocked.size){const names=[...blocked].map(enemyLabel).join(', ');sync.state='blocked';sync.text=`${good?`Updated ${good} in Roll20. `:''}Not selected in Roll20, so NOT changed: ${names}. Select ${blocked.size===1?'it':'them'} and press Retry.`;}
     else{sync.state='ok';sync.text=`✅ Updated ${good} token${good===1?'':'s'} in Roll20.`;}
   }catch(err){sync.state='fail';sync.text='❌ '+r20Problem(err);}
   sync.busy=false;save();renderSync();
   if(sync.again){sync.again=false;runSync();}
 }
+const enemyLabel=e=>{const g=state.groups.find(x=>x.enemies.includes(e));return g?label(g,e):(e.tname||'?');};
 const inflight=new Map();   // values this page is writing to Roll20 right now (so its echo isn't "news")
 function tempBar(){const t=state.rules.r20TBar;return /^[123]$/.test(t)&&t!==state.rules.r20Bar?t:null;}
 // Roll20 reports token edits made there (renames, HP or temp HP typed into a bar): mirror them here.
@@ -941,12 +966,23 @@ function recompute(){
 function undo(){
   const L=state.last;if(!L)return;
   for(const rec of L.recs){const g=findG(rec.gid),e=g&&g.enemies.find(x=>x.id===rec.eid);if(e){e.hp=rec.before.hp;e.temp=rec.before.temp;e.lrLeft=rec.before.lrLeft;}}
-  state.log=state.log.filter(x=>x.id!==L.id);state.last=null;save();renderGroups();renderResults();toast('Roll undone — HP restored.');
+  state.log=state.log.filter(x=>x.id!==L.id);state.last=null;state.redo=L;save();renderGroups();renderResults();toast('Roll undone — HP restored. Changed your mind? Press Redo.');
+}
+// Puts an undone roll back: same dice, same damage, applied to the enemies' HP as they are now.
+function redo(){
+  const R=state.redo;if(!R||state.last||state.pending)return;
+  state.redo=null;
+  R.recs=R.recs.filter(rec=>{const g=findG(rec.gid),e=g&&g.enemies.find(x=>x.id===rec.eid);if(!e)return false;rec.before={hp:e.hp,temp:e.temp,lrLeft:e.lrLeft};return true;});
+  if(!R.recs.length){renderResults();toast('Those enemies are gone, so there’s nothing to redo.');return;}
+  R.locked=false;delete R.sum;state.last=R;
+  state.log.unshift({id:R.id,text:''});state.log.length=Math.min(state.log.length,30);
+  recompute();toast('Roll put back.');logEv('redo',`${R.recs.length} enemies`);
 }
 function renderResults(){
   const box=$('#results'),L=state.last,P=state.pending;
   renderRollBtn();
   $('#undoBtn').hidden=!L||!!P;
+  $('#redoBtn').hidden=!state.redo||!!L||!!P;
   $('#history').innerHTML=state.log.filter(x=>x.text).map(x=>`<li>${esc(x.text)}</li>`).join('')||'<span class="muted">Nothing rolled yet.</span>';
   if(P){
     const need=P.recs.reduce((a,r)=>a+r.need,0),got=P.recs.reduce((a,r)=>a+r.d20.length,0);
@@ -1008,6 +1044,9 @@ function bindResults(){
     const rec=state.last.recs[b.dataset.lr];rec.lrUsed=!rec.lrUsed;recompute();
   });
   $('#undoBtn').addEventListener('click',undo);
+  $('#redoBtn').addEventListener('click',redo);
+  $('#pasteBtn').addEventListener('click',usePasted);
+  $('#pasteDice').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();usePasted();}});
 }
 
 // ---------- backup ----------

@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.0.5';
+  const VERSION = '2.0.6';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -34,8 +34,14 @@
   function selectedGraphics() {
     const d = d20();
     if (!d || !d.engine || !d.engine.tabletopSelected) throw new Error('noselect');
-    const graphics = Campaign.activePage().thegraphics;
-    return d.engine.tabletopSelected().map(x => x && x.model).filter(m => m && m.get && graphics.get(m.id) === m);
+    // Match by token id (Roll20 can hold more than one object for the same token).
+    const graphics = Campaign.activePage().thegraphics, seenIds = new Set();
+    return d.engine.tabletopSelected().map(x => {
+      const id = x && ((x.model && x.model.id) || x.id);
+      if (!id || seenIds.has(id)) return null;
+      seenIds.add(id);
+      return graphics.get(id) || null;
+    }).filter(Boolean);
   }
   function barAttr(m, bar) {
     const link = m.get('bar' + bar + '_link');
@@ -85,7 +91,8 @@
     if (cmd === '!msr-sel') {
       reply('SEL', { tokens: sel.map(m => {
         const b = readBar(m, bar), t = tbar ? readBar(m, tbar) : null;
-        return { id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max, temp: t ? (t.cur || 0) : null };
+        return { id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max, temp: t ? (t.cur || 0) : null,
+          x: +m.get('left') || 0, y: +m.get('top') || 0 };   // map position, so the site can order left → right
       }) });
       return;
     }
@@ -110,6 +117,7 @@
         if (opts.dead === '1') setDead(m, hp <= 0);
         results.push({ id: p.id, name: m.get('name'), hp, max: b.max });
       });
+      if (notSelected.length) logEv('refused', 'asked ' + notSelected.map(s => s.slice(-4)).join(',') + ' | selected ' + sel.map(m => m.id.slice(-4)).join(',') + ' | raw ' + (d20() ? d20().engine.tabletopSelected().length : '?'));
       reply(cmd === '!msr-init' ? 'INIT' : 'DMG', { results, missing: [], notSelected });
     }
   }
