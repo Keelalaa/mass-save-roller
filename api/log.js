@@ -1,7 +1,10 @@
 // Private diagnostic log, so problems on the DM's computer can be seen without being there.
 // POST: the website / add-on append one event (no personal data — just what the app did).
-// GET ?key=<LOG_KEY>: returns the newest events. Needs Upstash Redis env vars + LOG_KEY in Vercel.
+// GET ?key=<key>: returns the newest events. The key itself lives only in the local, git-ignored
+// .logkey file; this file holds just its SHA-256. Needs the Upstash Redis env vars in Vercel.
+import { createHash } from 'node:crypto';
 const LIST = 'msr:log';
+const KEY_SHA256 = '441952bf9e6aed35af7108ce1c33635caddfa26d654aadd147956dcd4c24854e';
 const MAX_EVENTS = 2000;
 
 async function redis(cmd) {
@@ -27,7 +30,8 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET') {
-      if (!process.env.LOG_KEY || req.query.key !== process.env.LOG_KEY) return res.status(403).json({ error: 'forbidden' });
+      const given = createHash('sha256').update(String(req.query.key || '')).digest('hex');
+      if (given !== KEY_SHA256) return res.status(403).json({ error: 'forbidden' });
       const n = Math.min(parseInt(req.query.n, 10) || 200, MAX_EVENTS);
       const rows = await redis(['LRANGE', LIST, '0', String(n - 1)]);
       if (rows === undefined) return res.status(503).json({ error: 'Redis is not connected to this Vercel project' });
