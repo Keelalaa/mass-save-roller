@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.0.4';
+  const VERSION = '2.0.5';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -68,12 +68,13 @@
     const parts = String(text).trim().split(/\s+/), cmd = parts[0], req = parts[1] || '';
     const opts = {}, pairs = [];
     parts.slice(2).forEach(p => {
-      const eq = /^(bar|dead)=(\w+)$/.exec(p);
+      const eq = /^(bar|dead|tbar|empty0)=(\w+)$/.exec(p);
       if (eq) { opts[eq[1]] = eq[2]; return; }
       const i = p.lastIndexOf(':');
       if (i > 0) pairs.push({ id: p.slice(0, i), n: parseInt(p.slice(i + 1), 10) || 0 });
     });
     const bar = /^[123]$/.test(opts.bar) ? opts.bar : '1';
+    const tbar = /^[123]$/.test(opts.tbar) && opts.tbar !== bar ? opts.tbar : null;   // optional temp HP bar
     const reply = (kind, data) => send({ type: 'reply', kind, data: Object.assign({ req }, data) });
 
     if (cmd === '!msr-ping') { reply('PONG', { v: VERSION }); return; }
@@ -82,7 +83,10 @@
     const selById = new Map(sel.map(m => [m.id, m]));
 
     if (cmd === '!msr-sel') {
-      reply('SEL', { tokens: sel.map(m => { const b = readBar(m, bar); return { id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max }; }) });
+      reply('SEL', { tokens: sel.map(m => {
+        const b = readBar(m, bar), t = tbar ? readBar(m, tbar) : null;
+        return { id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max, temp: t ? (t.cur || 0) : null };
+      }) });
       return;
     }
     // !msr-dmg: take damage (negative heals). !msr-init: set the bar's HP and max (for image
@@ -98,6 +102,7 @@
           results.push({ id: p.id, hp: p.n, max: p.n });
           return;
         }
+        if (b.cur === null && opts.empty0 === '1') b.cur = 0;
         if (b.cur === null) { results.push({ id: p.id, skipped: 'no HP on bar ' + bar }); return; }
         let hp = Math.max(0, b.cur - p.n);
         if (b.max > 0) hp = Math.min(hp, Math.max(b.max, b.cur));
@@ -189,6 +194,27 @@
   observer.observe(chat, { childList: true, subtree: true, characterData: true, attributes: true });
   const scanEvery = setInterval(scan, 1500);
   cleanups.push(() => { observer.disconnect(); clearInterval(scanEvery); clearTimeout(scanTimer); });
+
+  // ---------- token edits made in Roll20 (renames, HP typed into a bar) → website ----------
+  let watched = null;
+  const onGraphicChange = m => {
+    const ch = (m && m.changed) || {};
+    if (!Object.keys(ch).some(k => /^(name|bar[123]_(value|max))$/.test(k))) return;
+    const bars = {};
+    ['1', '2', '3'].forEach(i => { const b = readBar(m, i); bars[i] = { v: b.cur, max: b.max }; });
+    send({ type: 'tokenchange', tok: { id: m.id, name: m.get('name') || '', bars } });
+  };
+  const watchPage = () => {
+    const page = window.Campaign && Campaign.activePage && Campaign.activePage();
+    const c = page && page.thegraphics;
+    if (c === watched) return;
+    if (watched) watched.off('change', onGraphicChange);
+    watched = c || null;
+    if (watched) watched.on('change', onGraphicChange);
+  };
+  watchPage();
+  const pageEvery = setInterval(watchPage, 2000);   // follows map (page) changes
+  cleanups.push(() => { clearInterval(pageEvery); if (watched) watched.off('change', onGraphicChange); });
 
   // ---------- talking to the website window ----------
   window.addEventListener('message', onMessage);
