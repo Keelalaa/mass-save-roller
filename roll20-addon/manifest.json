@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Mass Save Roller — Roll20 Link",
+  "version": "1.0.0",
+  "description": "Sends the dice you roll in Roll20 to the Mass Save Roller website so it can work out every enemy's saving throw.",
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://app.roll20.net/editor/*", "https://app.roll20.net/editor"],
+      "js": ["roll20.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://mass-save-roller.vercel.app/*", "http://localhost:8765/*"],
+      "js": ["site.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": { "default_popup": "popup.html", "default_title": "Mass Save Roller — Roll20 Link" }
+}

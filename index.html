@@ -99,6 +99,18 @@ header .sp{flex:1}
 .history{font-size:13px;color:var(--muted);margin:0;padding-left:18px}
 .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#33283d;border:1px solid var(--gold);padding:10px 16px;border-radius:8px;z-index:99;max-width:90vw;box-shadow:0 6px 20px #0008}
 .locked{font-size:12px;color:var(--warn)}
+.r20box{background:#1b1722;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:0 0 12px}
+.r20box>label{display:flex;gap:8px;align-items:center;margin:4px 0}
+.r20box .sub{margin-left:26px}
+.r20box.off .sub{display:none}
+.r20box details{margin-top:6px}.r20box ol{padding-left:18px;margin:6px 0}.r20box a{color:var(--gold2)}
+.ok{color:var(--pass)}.bad{color:var(--fail)}.warn{color:var(--warn)}
+.waiting{border:1px dashed var(--gold);border-radius:8px;padding:10px;background:#231d14}
+.waiting h3{margin:0 0 6px;font-size:15px;color:var(--gold2)}
+.prog{font-size:22px;font-weight:800;color:var(--gold2)}
+.wlist{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.wlist span{background:#1b1722;border-radius:6px;padding:3px 8px;font-size:13px}
+.wlist span.done{background:#1f4a32}
 </style>
 </head>
 <body>
@@ -139,6 +151,19 @@ header .sp{flex:1}
       <div class="row"><label><input type="checkbox" id="spIsSpell"> It's a spell (Magic Resistance applies)</label></div>
       <div class="row"><label><input type="checkbox" id="spPerTarget"> Roll damage separately for each enemy</label></div>
       <div class="hint" style="margin-bottom:10px">Off = roll damage once for everyone (the official rule).</div>
+      <div class="r20box">
+        <label><input type="checkbox" id="r20On"> <b>Roll the d20s in Roll20</b></label>
+        <label class="sub"><input type="checkbox" id="r20Dmg"> Roll the damage in Roll20 too</label>
+        <div id="r20Status" class="hint"></div>
+        <details class="hint"><summary>How to install the Roll20 add-on (one time)</summary>
+          <ol>
+            <li><a href="roll20-addon.zip" download>Download the add-on</a> and unzip it somewhere you'll keep it.</li>
+            <li>In Chrome go to <b>chrome://extensions</b> and switch on <b>Developer mode</b> (top right).</li>
+            <li>Click <b>Load unpacked</b> and pick the unzipped <b>roll20-addon</b> folder.</li>
+            <li>Refresh this page and your Roll20 tab.</li>
+          </ol>
+        </details>
+      </div>
       <button id="rollBtn" class="primary big">🎲 Roll saves</button>
       <div id="targetCount" class="hint" style="text-align:center"></div>
     </div>
@@ -269,12 +294,12 @@ function defaultState(){
       newGroup({name:'Goblin',count:4,hp:'7',saves:{str:-1,dex:2,con:0,int:0,wis:-1,cha:-1}}),
       newGroup({name:'Fire Elemental',count:1,hp:'102',saves:{str:0,dex:3,con:3,int:-2,wis:0,cha:-2},dmg:{fire:'immune',poison:'immune',bludgeoning:'resist',piercing:'resist',slashing:'resist'}}),
     ],
-    custom:[],rules:{nat:false},last:null,log:[]
+    custom:[],rules:{nat:false,roll20:false,roll20Dmg:false},last:null,pending:null,log:[]
   };
 }
 let state;
 function load(){
-  try{const raw=localStorage.getItem(STORE_KEY);if(raw){const s=JSON.parse(raw);state=Object.assign(defaultState(),s);state.rules=Object.assign({nat:false},s.rules);return;}}catch(e){}
+  try{const raw=localStorage.getItem(STORE_KEY);if(raw){const s=JSON.parse(raw);state=Object.assign(defaultState(),s);state.rules=Object.assign({nat:false,roll20:false,roll20Dmg:false},s.rules);return;}}catch(e){}
   state=defaultState();
 }
 function save(){try{localStorage.setItem(STORE_KEY,JSON.stringify(state));}catch(e){}}
@@ -300,7 +325,20 @@ function renderSpell(){
   document.querySelectorAll('input[name=onSuccess]').forEach(r=>r.checked=r.value===s.onSuccess);
   $('#spIsSpell').checked=s.isSpell;$('#spPerTarget').checked=s.perTarget;
   $('#natRule').checked=state.rules.nat;
-  renderParts();
+  $('#r20On').checked=state.rules.roll20;$('#r20Dmg').checked=state.rules.roll20Dmg;
+  renderParts();renderR20();
+}
+function renderR20(){
+  const on=state.rules.roll20;
+  $('.r20box').classList.toggle('off',!on);
+  $('#rollBtn').textContent=on?'🎲 Start — then roll in Roll20':'🎲 Roll saves';
+  const st=$('#r20Status');
+  if(!on){st.innerHTML='';return;}
+  st.innerHTML=ext.state==='checking'?'Looking for the Roll20 add-on…'
+    :ext.state==='stale'?'<span class="warn">⚠️ The add-on was updated or reloaded. Refresh this page.</span>'
+    :ext.state==='none'?'<span class="bad">❌ Roll20 add-on not found in this Chrome.</span> Install it below, or untick this to roll here.'
+    :ext.roll20Open?`<span class="ok">✅ Add-on connected · Roll20 game open</span>`
+    :`<span class="warn">⚠️ Add-on connected, but no Roll20 game is open in this Chrome.</span>`;
 }
 function renderParts(){
   const opts=t=>DMG_TYPES.map(d=>`<option value="${d}"${d===t?' selected':''}>${d}</option>`).join('');
@@ -318,6 +356,8 @@ function bindSpell(){
   $('#spIsSpell').addEventListener('change',e=>{s().isSpell=e.target.checked;save();});
   $('#spPerTarget').addEventListener('change',e=>{s().perTarget=e.target.checked;save();});
   $('#natRule').addEventListener('change',e=>{state.rules.nat=e.target.checked;save();recompute();});
+  $('#r20On').addEventListener('change',e=>{state.rules.roll20=e.target.checked;save();renderR20();if(e.target.checked)pingExt();});
+  $('#r20Dmg').addEventListener('change',e=>{state.rules.roll20Dmg=e.target.checked;save();});
   $('#parts').addEventListener('input',e=>{const i=e.target.dataset.p;if(i==null)return;s().parts[i][e.target.dataset.pf]=e.target.value;save();});
   $('#parts').addEventListener('change',e=>{const i=e.target.dataset.p;if(i==null)return;s().parts[i][e.target.dataset.pf]=e.target.value;save();});
   $('#parts').addEventListener('click',e=>{const i=e.target.dataset.delpart;if(i==null)return;s().parts.splice(i,1);save();renderParts();});
@@ -508,25 +548,84 @@ function doRoll(){
   const parts=sp.parts.filter(p=>String(p.dice).trim());
   for(const p of parts)if(!parseDice(p.dice).ok){toast(`Can't read the damage “${p.dice}”. Use something like 8d6 or 3d8+4.`);return;}
   for(const g of state.groups)if(g.bonus.trim()&&!parseDice(g.bonus).ok){toast(`Can't read “${g.bonus}” in Extra to saves for ${g.name}.`);return;}
+  const r20=state.rules.roll20, r20Dmg=r20&&state.rules.roll20Dmg, perTarget=sp.perTarget&&!r20Dmg;
   const recs=[];
   for(const g of state.groups)for(const e of g.enemies){
     if(!e.target||e.hp<=0)continue;
-    recs.push({gid:g.id,eid:e.id,d20:[rnd(20),rnd(20)],bonusF:g.bonus,bonus:g.bonus.trim()?rollDice(g.bonus):null,
-      dmg:sp.perTarget?parts.map(p=>({type:p.type,dice:p.dice,...rollDice(p.dice)})):null,lrUsed:false,
-      before:{hp:e.hp,temp:e.temp,lrLeft:e.lrLeft}});
+    recs.push({gid:g.id,eid:e.id,d20:r20?[]:[rnd(20),rnd(20)],need:r20?(rollMode(g,sp)==='normal'?1:2):0,
+      bonusF:g.bonus,bonus:g.bonus.trim()?rollDice(g.bonus):null,
+      dmg:perTarget?parts.map(p=>({type:p.type,dice:p.dice,...rollDice(p.dice)})):null,lrUsed:false});
   }
   if(!recs.length){toast('Tick at least one enemy that is still standing.');return;}
-  state.last={id:uid(),spell:JSON.parse(JSON.stringify(sp)),dmg:sp.perTarget?null:parts.map(p=>({type:p.type,dice:p.dice,...rollDice(p.dice)})),recs,locked:false};
-  state.log.unshift({id:state.last.id,text:''});state.log.length=Math.min(state.log.length,30);
+  const spell=JSON.parse(JSON.stringify(sp));spell.perTarget=perTarget;
+  const dmg=perTarget?null:parts.map(p=>r20Dmg?{type:p.type,dice:p.dice,total:null,text:''}:{type:p.type,dice:p.dice,...rollDice(p.dice)});
+  if(r20){
+    state.pending={id:uid(),spell,dmg,recs};save();renderResults();
+    $('#results').scrollIntoView({behavior:'smooth',block:'start'});
+    if(ext.state!=='ok')toast('Roll20 add-on not connected — rolls from Roll20 can’t reach this page.');
+    return;
+  }
+  startResult({id:uid(),spell,dmg,recs});
+}
+function rollMode(g,sp){
+  let adv=0,dis=0;
+  if(g.adv==='adv')adv++;if(g.adv==='dis')dis++;
+  if(g.magicRes&&sp.isSpell)adv++;
+  return adv&&!dis?'adv':dis&&!adv?'dis':'normal';
+}
+// Takes HP snapshots now (not when the roll started) so hand edits made while waiting aren't lost.
+function startResult(R){
+  R.recs=R.recs.filter(rec=>{
+    const g=findG(rec.gid),e=g&&g.enemies.find(x=>x.id===rec.eid);if(!e)return false;
+    while(rec.d20.length<2)rec.d20.push(rnd(20));
+    delete rec.need;rec.before={hp:e.hp,temp:e.temp,lrLeft:e.lrLeft};return true;
+  });
+  if(R.dmg)R.dmg.forEach(p=>{if(p.total==null)Object.assign(p,rollDice(p.dice));});
+  state.last={id:R.id,spell:R.spell,dmg:R.dmg,recs:R.recs,locked:false};state.pending=null;
+  state.log.unshift({id:R.id,text:''});state.log.length=Math.min(state.log.length,30);
   recompute();
+}
+// ---------- Roll20 link ----------
+const ext={state:'checking',roll20Open:false,version:null};
+let pingTimer=null;
+function pingExt(){
+  clearTimeout(pingTimer);
+  window.postMessage({source:'msr-page',type:'ping'},location.origin);
+  pingTimer=setTimeout(()=>{if(ext.state==='checking'){ext.state='none';renderR20();}},1500);
+}
+window.addEventListener('message',ev=>{
+  const d=ev.data;if(ev.source!==window||!d||d.source!=='msr-ext')return;
+  if(d.type==='pong'){ext.state='ok';ext.roll20Open=d.roll20Open;ext.version=d.version;renderR20();}
+  else if(d.type==='stale'){ext.state='stale';renderR20();}
+  else if(d.type==='roll'){ext.state='ok';ext.roll20Open=true;renderR20();onRoll20Roll(d.roll);}
+});
+window.addEventListener('focus',()=>{if(state.rules.roll20){if(ext.state!=='stale')ext.state=ext.state==='ok'?'ok':'checking';pingExt();}});
+const pendingDone=P=>P.recs.every(r=>r.d20.length>=r.need)&&(!P.dmg||P.dmg.every(p=>p.total!=null));
+function onRoll20Roll(roll){
+  const P=state.pending;
+  if(!P||!roll||!Array.isArray(roll.dice))return;
+  // Only the individual dice matter — Roll20's added-up total is ignored for saves.
+  const d20s=roll.dice.filter(d=>d.sides===20).map(d=>d.value);
+  if(d20s.length){
+    let used=0;
+    for(const v of d20s){const rec=P.recs.find(r=>r.d20.length<r.need);if(!rec)break;rec.d20.push(clamp(v,1,20));used++;}
+    if(!used){toast('Got more d20s than enemies — extra dice ignored.');return;}
+    if(used<d20s.length)toast(`Used ${used} of the ${d20s.length} d20s — the rest were extra.`);
+  } else {
+    const slot=P.dmg&&P.dmg.find(p=>p.total==null);
+    if(!slot)return;
+    const kept=roll.dice.filter(d=>!d.dropped);
+    slot.total=Number.isFinite(roll.total)?roll.total:kept.reduce((a,d)=>a+d.value,0);
+    slot.text=`from Roll20: ${roll.formula||''} [${kept.map(d=>d.value).join(', ')}]`;
+  }
+  save();
+  if(pendingDone(P)){startResult(P);toast('Got all the Roll20 dice — saves worked out.');}
+  else renderResults();
 }
 function evalRec(rec,L){
   const g=findG(rec.gid),e=g&&g.enemies.find(x=>x.id===rec.eid);if(!e)return null;
   const sp=L.spell,ab=sp.ability;
-  let adv=0,dis=0;
-  if(g.adv==='adv')adv++;if(g.adv==='dis')dis++;
-  if(g.magicRes&&sp.isSpell)adv++;
-  const mode=adv&&!dis?'adv':dis&&!adv?'dis':'normal';
+  const mode=rollMode(g,sp);
   const [a,b]=rec.d20,kept=mode==='adv'?Math.max(a,b):mode==='dis'?Math.min(a,b):a;
   if(rec.bonusF!==g.bonus){rec.bonusF=g.bonus;rec.bonus=g.bonus.trim()&&parseDice(g.bonus).ok?rollDice(g.bonus):null;}
   const mod=num(g.saves[ab]),cover=ab==='dex'?num(g.cover):0,bonus=rec.bonus?rec.bonus.total:0;
@@ -576,9 +675,26 @@ function undo(){
   state.log=state.log.filter(x=>x.id!==L.id);state.last=null;save();renderGroups();renderResults();toast('Roll undone — HP restored.');
 }
 function renderResults(){
-  const box=$('#results'),L=state.last;
-  $('#undoBtn').hidden=!L;
+  const box=$('#results'),L=state.last,P=state.pending;
+  $('#undoBtn').hidden=!L||!!P;
   $('#history').innerHTML=state.log.filter(x=>x.text).map(x=>`<li>${esc(x.text)}</li>`).join('')||'<span class="muted">Nothing rolled yet.</span>';
+  if(P){
+    const need=P.recs.reduce((a,r)=>a+r.need,0),got=P.recs.reduce((a,r)=>a+r.d20.length,0);
+    const two=P.recs.filter(r=>r.need===2).length;
+    const names=P.recs.map(r=>{const g=findG(r.gid),e=g&&g.enemies.find(x=>x.id===r.eid);if(!e)return '';
+      return `<span class="${r.d20.length>=r.need?'done':''}">${esc(label(g,e))}${r.need===2?' (2 dice)':''}: ${r.d20.length?r.d20.join(' / '):'…'}</span>`;}).join('');
+    const dmgLine=P.dmg&&P.dmg.some(p=>p.total==null||String(p.text).startsWith('from Roll20'))?
+      `<div style="margin-top:8px"><b>Damage:</b> ${P.dmg.map(p=>p.total==null?`waiting for <b>${esc(p.dice)}</b> ${esc(p.type)}`:`<span class="ok">${p.total} ${esc(p.type)}</span>`).join(' · ')}</div>`:'';
+    box.innerHTML=`<div class="waiting">
+      <h3>📡 Waiting for your Roll20 dice — ${esc(P.spell.name||'Effect')} (DC ${P.spell.dc} ${P.spell.ability.toUpperCase()})</h3>
+      <div>In Roll20 type <b>/r ${need}d20</b>${two?` <span class="muted">(${two} enem${two===1?'y has':'ies have'} advantage/disadvantage, so ${two===1?'it needs':'they need'} 2 dice)</span>`:''}. Only the single dice are used — Roll20's total doesn't matter. You can also roll them a few at a time.</div>
+      <div class="prog" style="margin-top:6px">${got} / ${need} d20s</div>
+      <div class="wlist">${names}</div>${dmgLine}
+      <div class="row"><button class="small" data-pact="fill">Roll the rest here</button><button class="small danger" data-pact="cancel">Cancel</button></div>
+      ${ext.state==='ok'?'':'<div class="hint bad">The Roll20 add-on isn’t connected, so dice from Roll20 can’t arrive.</div>'}
+    </div>`;
+    return;
+  }
   if(!L){box.innerHTML='<p class="muted">Pick your spell, tick the enemies caught in it, then hit <b>Roll saves</b>.</p>';return;}
   const sp=L.spell,dis=L.locked?'disabled':'';
   const s=L.sum||{passN:0,failN:0,downN:0,dmgT:0};
@@ -612,6 +728,12 @@ function bindResults(){
     recompute();
   });
   box.addEventListener('click',ev=>{
+    const pa=ev.target.closest('[data-pact]');
+    if(pa&&state.pending){
+      if(pa.dataset.pact==='fill')startResult(state.pending);
+      else{state.pending=null;save();renderResults();}
+      return;
+    }
     const b=ev.target.closest('[data-lr]');if(!b||!state.last||state.last.locked)return;
     const rec=state.last.recs[b.dataset.lr];rec.lrUsed=!rec.lrUsed;recompute();
   });
@@ -636,7 +758,7 @@ function bindBackup(){
 }
 
 function renderAll(){renderPresets();renderSpell();renderGroups();renderResults();}
-load();bindSpell();bindGroups();bindResults();bindBackup();renderAll();
+load();bindSpell();bindGroups();bindResults();bindBackup();renderAll();pingExt();
 </script>
 </body>
 </html>

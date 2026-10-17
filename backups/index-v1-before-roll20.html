@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mass Save Roller</title>
+<style>
+:root{
+  --bg:#15121a; --panel:#211c27; --panel2:#2a2431; --line:#3b3345; --text:#ece6f2; --muted:#a69cb3;
+  --gold:#d6ad55; --gold2:#f0cf86; --pass:#4fbf7a; --fail:#e0565b; --warn:#e6a23c; --blue:#6aa7e8;
+  --r:10px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button,input,select{font:inherit;color:inherit}
+input,select{background:#181420;border:1px solid var(--line);border-radius:7px;padding:6px 8px;min-width:0}
+input:focus,select:focus{outline:2px solid var(--gold);outline-offset:-1px}
+input[type=number]{width:64px}
+input[type=checkbox]{width:18px;height:18px;accent-color:var(--gold);margin:0;vertical-align:middle}
+button{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 10px;cursor:pointer}
+button:hover{border-color:var(--gold)}
+button.primary{background:linear-gradient(#e2bb63,#b98d34);color:#1b1408;border:0;font-weight:700}
+button.big{font-size:18px;padding:12px 18px;width:100%}
+button.danger:hover{border-color:var(--fail);color:var(--fail)}
+button.icon{padding:4px 8px}
+button.small{padding:3px 8px;font-size:13px}
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--line);background:#1a1620}
+header h1{margin:0;font-size:22px;color:var(--gold2);letter-spacing:.5px}
+header .sp{flex:1}
+.layout{display:grid;grid-template-columns:minmax(0,440px) minmax(0,1fr);gap:16px;padding:16px;max-width:1400px;margin:0 auto}
+.layout>section{min-width:0}
+@media (max-width:900px){.layout{grid-template-columns:minmax(0,1fr);padding:10px 16px}}
+@media (max-width:520px){.res{font-size:13px}.res td,.res th{padding:5px 2px}.saves{grid-template-columns:repeat(3,1fr)}.enemy{grid-template-columns:auto minmax(0,1fr)}.enemy .ectl{grid-column:1/-1;justify-content:flex-start}.enemy .ectl input[type=number]{width:46px!important}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:16px}
+.panel h2{margin:0 0 10px;font-size:17px;color:var(--gold2);display:flex;align-items:center;gap:8px}
+.panel h2 .sp{flex:1}
+.muted{color:var(--muted)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.row>label{display:flex;align-items:center;gap:6px}
+.lbl{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+.grow{flex:1}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg label{padding:6px 10px;cursor:pointer;background:#181420}
+.seg input{display:none}
+.seg label:has(input:checked){background:var(--gold);color:#1b1408;font-weight:600}
+.part{display:flex;gap:6px;margin:6px 0}
+.part input{flex:1}
+.hint{font-size:12px;color:var(--muted);margin:4px 0}
+/* groups */
+.group{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r);margin-bottom:12px;position:relative}
+.group.dragging{opacity:.6}
+.ghead{display:flex;gap:8px;align-items:center;padding:8px 10px;flex-wrap:wrap}
+.handle{cursor:grab;touch-action:none;user-select:none;color:var(--muted);font-size:20px;padding:0 4px}
+.collapse{background:none;border:0;padding:2px 6px;font-size:16px;transition:transform .15s}
+.group.closed .collapse{transform:rotate(-90deg)}
+.gname{font-weight:700;flex:1;min-width:120px;font-size:16px}
+.alive{font-size:13px;color:var(--muted)}
+.gbody{padding:0 12px 12px;border-top:1px solid var(--line)}
+.group.closed .gbody{display:none}
+.saves{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin:10px 0}
+.saves label{display:flex;flex-direction:column;align-items:center;font-size:12px;color:var(--muted);gap:2px}
+.saves input{width:100%;text-align:center}
+.opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:6px 14px;margin:10px 0}
+.opts label{display:flex;gap:8px;align-items:center}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 10px}
+.chip{font-size:12px;padding:3px 8px;border-radius:999px;background:#181420;color:var(--muted)}
+.chip.resist{background:#2b4a6b;color:#cfe4ff;border-color:#4a7bb0}
+.chip.immune{background:#3a3a3a;color:#fff;border-color:#888;text-decoration:line-through}
+.chip.vuln{background:#6b2b2b;color:#ffd6d6;border-color:#b04a4a}
+.enemies{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.enemy{display:grid;grid-template-columns:auto minmax(80px,1fr) auto;gap:8px;align-items:center;background:#1b1722;border-radius:8px;padding:6px 8px}
+.enemy.dead{opacity:.55}
+.enemy .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar{height:6px;background:#3a3040;border-radius:4px;overflow:hidden;margin-top:4px}
+.bar>i{display:block;height:100%;background:var(--pass)}
+.bar.mid>i{background:var(--warn)}.bar.low>i{background:var(--fail)}
+.ectl{display:flex;gap:4px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.ectl input[type=number]{width:56px;padding:4px 6px}
+.lr{color:var(--gold);font-size:13px;letter-spacing:1px}
+.gactions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.dropline{position:absolute;left:0;right:0;height:3px;background:var(--gold);border-radius:2px;pointer-events:none;z-index:5}
+/* results */
+.sumline{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
+.pill{padding:3px 10px;border-radius:999px;font-weight:700;font-size:13px}
+.pill.pass{background:#1f4a32;color:#9ff0bf}.pill.fail{background:#4e1f22;color:#ffb3b6}.pill.down{background:#3a3a3a;color:#ddd}
+.dmgparts{background:#1b1722;border-radius:8px;padding:8px;margin:8px 0}
+.dmgparts .dp{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:3px 0}
+.dmgparts .dice{font-size:12px;color:var(--muted);word-break:break-all}
+.res{width:100%;border-collapse:collapse;font-size:14px}
+.res th{text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;padding:4px;border-bottom:1px solid var(--line)}
+.res td{padding:6px 4px;border-bottom:1px solid #2c2634;vertical-align:middle}
+.res input[type=number]{width:52px;padding:3px 4px;text-align:center}
+.res .kept{outline:2px solid var(--gold)}
+.badge{font-weight:800;font-size:12px;padding:2px 7px;border-radius:5px}
+.badge.pass{background:var(--pass);color:#0b2414}.badge.fail{background:var(--fail);color:#2a0607}
+.tag{font-size:11px;color:var(--muted);display:block}
+.down{color:var(--fail);font-weight:700}
+.tablewrap{overflow-x:auto}
+.history{font-size:13px;color:var(--muted);margin:0;padding-left:18px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#33283d;border:1px solid var(--gold);padding:10px 16px;border-radius:8px;z-index:99;max-width:90vw;box-shadow:0 6px 20px #0008}
+.locked{font-size:12px;color:var(--warn)}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚔️ Mass Save Roller</h1>
+  <span class="sp"></span>
+  <button id="exportBtn" class="small" title="Download a backup of your enemies and spells">Backup</button>
+  <button id="importBtn" class="small" title="Load a backup file">Restore</button>
+  <input id="importFile" type="file" accept=".json,application/json" hidden>
+</header>
+
+<main class="layout">
+  <section>
+    <div class="panel" id="spellPanel">
+      <h2>Spell / Effect</h2>
+      <div class="row">
+        <select id="preset" class="grow"></select>
+        <button id="saveSpell" class="small" title="Save this spell to your list">Save</button>
+        <button id="delSpell" class="small danger" title="Delete this saved spell">Delete</button>
+      </div>
+      <div class="row"><input id="spName" class="grow" placeholder="Spell or effect name"></div>
+      <div class="row">
+        <label><span class="lbl">Save</span>
+          <select id="spAbility"><option value="str">STR</option><option value="dex">DEX</option><option value="con">CON</option><option value="int">INT</option><option value="wis">WIS</option><option value="cha">CHA</option></select></label>
+        <label><span class="lbl">DC</span><input id="spDC" type="number" min="1" max="40"></label>
+      </div>
+      <div class="row">
+        <span class="lbl">On a pass</span>
+        <span class="seg">
+          <label><input type="radio" name="onSuccess" value="half">Half damage</label>
+          <label><input type="radio" name="onSuccess" value="none">No damage</label>
+        </span>
+      </div>
+      <div class="lbl" style="margin-top:10px">Damage</div>
+      <div id="parts"></div>
+      <div class="row"><button id="addPart" class="small">+ Add damage type</button></div>
+      <div class="hint">Type dice like <b>8d6</b>, <b>3d8+4</b>, or a number you already rolled like <b>28</b>. Leave empty for no-damage effects (Hold Person, Hypnotic Pattern…).</div>
+      <div class="row"><label><input type="checkbox" id="spIsSpell"> It's a spell (Magic Resistance applies)</label></div>
+      <div class="row"><label><input type="checkbox" id="spPerTarget"> Roll damage separately for each enemy</label></div>
+      <div class="hint" style="margin-bottom:10px">Off = roll damage once for everyone (the official rule).</div>
+      <button id="rollBtn" class="primary big">🎲 Roll saves</button>
+      <div id="targetCount" class="hint" style="text-align:center"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Results <span class="sp"></span><button id="undoBtn" class="small" hidden>↩ Undo roll</button></h2>
+      <div id="results"></div>
+    </div>
+
+    <div class="panel">
+      <h2>History</h2>
+      <ol id="history" class="history"></ol>
+      <div class="row" style="margin-top:12px"><label><input type="checkbox" id="natRule"> House rule: natural 20 always passes, natural 1 always fails</label></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="panel">
+      <h2>Enemies <span class="sp"></span><button id="addGroup" class="primary small">+ Add enemy group</button></h2>
+      <div class="hint">Each group is one kind of monster (e.g. 6 Goblins). Tick the enemies caught in the spell. Click a damage type to cycle: <span class="chip resist">resistant</span> <span class="chip immune">immune</span> <span class="chip vuln">vulnerable</span>.</div>
+      <div id="groups"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+'use strict';
+const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
+const ABILS=['str','dex','con','int','wis','cha'];
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1';
+const $=s=>document.querySelector(s);
+const uid=()=>Math.random().toString(36).slice(2,10);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const clamp=(n,a,b)=>Math.min(b,Math.max(a,n));
+const num=(v,d=0)=>{const n=parseInt(v,10);return Number.isFinite(n)?n:d;};
+const sgn=n=>(n>=0?'+':'−')+Math.abs(n);
+
+// ---------- dice ----------
+function rnd(n){const a=new Uint32Array(1);crypto.getRandomValues(a);return a[0]%n+1;}
+function parseDice(str){
+  const s=String(str??'').replace(/\s+/g,'').toLowerCase();
+  if(!s) return {ok:true,terms:[]};
+  const re=/([+-]?)(?:(\d*)d(\d+)|(\d+))/y, terms=[];
+  re.lastIndex=0;
+  while(re.lastIndex<s.length){
+    const m=re.exec(s);
+    if(!m) return {ok:false,terms:[]};
+    if(!m[1]&&terms.length) return {ok:false,terms:[]};
+    const sign=m[1]==='-'?-1:1;
+    if(m[3]!==undefined){
+      const n=m[2]===''?1:+m[2], f=+m[3];
+      if(n<1||n>500||f<1||f>1000) return {ok:false,terms:[]};
+      terms.push({sign,n,f});
+    } else terms.push({sign,c:+m[4]});
+  }
+  return {ok:true,terms};
+}
+function rollDice(str){
+  const p=parseDice(str);
+  if(!p.ok) return {ok:false,total:0,text:''};
+  let total=0;const bits=[];
+  for(const t of p.terms){
+    const s=t.sign<0?'− ':'+ ';
+    if(t.c!==undefined){total+=t.sign*t.c;bits.push(s+t.c);}
+    else{const r=[];for(let i=0;i<t.n;i++)r.push(rnd(t.f));total+=t.sign*r.reduce((a,b)=>a+b,0);bits.push(s+'['+r.join(', ')+']');}
+  }
+  return {ok:true,total,text:bits.join(' ').replace(/^\+ /,'')};
+}
+
+// ---------- presets ----------
+const P=(name,ability,onSuccess,parts,isSpell=true)=>({name,ability,onSuccess,isSpell,parts:parts.map(([dice,type])=>({dice,type}))});
+const BUILTIN=[
+  P('Burning Hands','dex','half',[['3d6','fire']]),
+  P('Call Lightning','dex','half',[['3d10','lightning']]),
+  P('Chain Lightning','dex','half',[['10d8','lightning']]),
+  P('Circle of Death','con','half',[['8d6','necrotic']]),
+  P('Cloudkill','con','half',[['5d8','poison']]),
+  P('Cone of Cold','con','half',[['8d8','cold']]),
+  P('Destructive Wave','con','half',[['5d6','thunder'],['5d6','radiant']]),
+  P('Disintegrate','dex','none',[['10d6+40','force']]),
+  P('Dissonant Whispers','wis','half',[['3d6','psychic']]),
+  P('Erupting Earth','dex','half',[['3d12','bludgeoning']]),
+  P('Fear','wis','none',[]),
+  P('Fireball','dex','half',[['8d6','fire']]),
+  P('Flame Strike','dex','half',[['4d6','fire'],['4d6','radiant']]),
+  P('Hold Person / Monster','wis','none',[]),
+  P('Hypnotic Pattern','wis','none',[]),
+  P('Ice Storm','dex','half',[['2d8','bludgeoning'],['4d6','cold']]),
+  P('Insect Plague','con','half',[['4d10','piercing']]),
+  P('Lightning Bolt','dex','half',[['8d6','lightning']]),
+  P('Meteor Swarm','dex','half',[['20d6','fire'],['20d6','bludgeoning']]),
+  P('Moonbeam','con','half',[['2d10','radiant']]),
+  P('Sacred Flame','dex','none',[['1d8','radiant']]),
+  P('Shatter','con','half',[['3d8','thunder']]),
+  P('Slow','wis','none',[]),
+  P('Spirit Guardians','wis','half',[['3d8','radiant']]),
+  P('Sunburst','con','half',[['12d6','radiant']]),
+  P('Sword Burst','dex','none',[['1d6','force']]),
+  P('Synaptic Static','int','half',[['8d6','psychic']]),
+  P('Thunderclap','con','none',[['1d6','thunder']]),
+  P('Thunderwave','con','half',[['2d8','thunder']]),
+  P('Toll the Dead','wis','none',[['1d8','necrotic']]),
+  P('Vitriolic Sphere','dex','half',[['10d4','acid']]),
+  P('Wall of Fire','dex','half',[['5d8','fire']]),
+  P('Web','dex','none',[]),
+  P('Word of Radiance','con','none',[['1d6','radiant']]),
+  P('Breath Weapon (monster)','dex','half',[['6d6','fire']],false),
+  P('Trap (non-magical)','dex','half',[['4d10','bludgeoning']],false),
+];
+
+// ---------- state ----------
+function newEnemy(g,n){const hp=rollHp(g.hp);return {id:uid(),n,hp,max:hp,temp:0,lrLeft:g.lr,target:true};}
+function rollHp(f){const r=rollDice(f);return r.ok&&r.total>0?r.total:1;}
+function setCount(g,n){
+  n=clamp(num(n,1),1,100);
+  while(g.enemies.length<n){const next=g.enemies.reduce((m,e)=>Math.max(m,e.n),0)+1;g.enemies.push(newEnemy(g,next));}
+  g.enemies.length=n;g.count=n;
+}
+function newGroup(o={}){
+  const g={id:uid(),name:o.name||'New enemy',hp:o.hp||'10',saves:Object.assign({str:0,dex:0,con:0,int:0,wis:0,cha:0},o.saves||{}),
+    adv:'normal',magicRes:!!o.magicRes,autoFail:false,evasion:false,cover:0,bonus:'',lr:o.lr||0,dmg:Object.assign({},o.dmg||{}),enemies:[],count:0};
+  setCount(g,o.count||1);return g;
+}
+function defaultState(){
+  return {
+    spell:{name:'Fireball',dc:15,ability:'dex',onSuccess:'half',isSpell:true,perTarget:false,parts:[{dice:'8d6',type:'fire'}]},
+    groups:[
+      newGroup({name:'Goblin',count:4,hp:'7',saves:{str:-1,dex:2,con:0,int:0,wis:-1,cha:-1}}),
+      newGroup({name:'Fire Elemental',count:1,hp:'102',saves:{str:0,dex:3,con:3,int:-2,wis:0,cha:-2},dmg:{fire:'immune',poison:'immune',bludgeoning:'resist',piercing:'resist',slashing:'resist'}}),
+    ],
+    custom:[],rules:{nat:false},last:null,log:[]
+  };
+}
+let state;
+function load(){
+  try{const raw=localStorage.getItem(STORE_KEY);if(raw){const s=JSON.parse(raw);state=Object.assign(defaultState(),s);state.rules=Object.assign({nat:false},s.rules);return;}}catch(e){}
+  state=defaultState();
+}
+function save(){try{localStorage.setItem(STORE_KEY,JSON.stringify(state));}catch(e){}}
+const closed=(()=>{let s=new Set();try{s=new Set(JSON.parse(localStorage.getItem(OPEN_KEY)||'[]'));}catch(e){}
+  const persist=()=>{try{localStorage.setItem(OPEN_KEY,JSON.stringify([...s]));}catch(e){}};
+  return {has:k=>s.has(k),toggle:k=>{s.has(k)?s.delete(k):s.add(k);persist();}};})();
+
+const findG=id=>state.groups.find(g=>g.id===id);
+const label=(g,e)=>g.enemies.length>1?`${g.name} ${e.n}`:g.name;
+
+function toast(msg){const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),2600);}
+
+// ---------- spell panel ----------
+function renderPresets(){
+  const sel=$('#preset');
+  const c=state.custom.map((s,i)=>`<option value="c${i}">${esc(s.name)}</option>`).join('');
+  const b=BUILTIN.map((s,i)=>`<option value="b${i}">${esc(s.name)}</option>`).join('');
+  sel.innerHTML=`<option value="">Load a spell…</option>${c?`<optgroup label="My spells">${c}</optgroup>`:''}<optgroup label="Common spells">${b}</optgroup>`;
+}
+function renderSpell(){
+  const s=state.spell;
+  $('#spName').value=s.name;$('#spAbility').value=s.ability;$('#spDC').value=s.dc;
+  document.querySelectorAll('input[name=onSuccess]').forEach(r=>r.checked=r.value===s.onSuccess);
+  $('#spIsSpell').checked=s.isSpell;$('#spPerTarget').checked=s.perTarget;
+  $('#natRule').checked=state.rules.nat;
+  renderParts();
+}
+function renderParts(){
+  const opts=t=>DMG_TYPES.map(d=>`<option value="${d}"${d===t?' selected':''}>${d}</option>`).join('');
+  $('#parts').innerHTML=state.spell.parts.map((p,i)=>`<div class="part">
+    <input data-p="${i}" data-pf="dice" value="${esc(p.dice)}" placeholder="e.g. 8d6">
+    <select data-p="${i}" data-pf="type">${opts(p.type)}</select>
+    <button class="icon danger" data-delpart="${i}" title="Remove">✕</button></div>`).join('')||'<div class="hint">No damage — just checks pass/fail.</div>';
+}
+function bindSpell(){
+  const s=()=>state.spell;
+  $('#spName').addEventListener('input',e=>{s().name=e.target.value;save();});
+  $('#spAbility').addEventListener('change',e=>{s().ability=e.target.value;save();});
+  $('#spDC').addEventListener('input',e=>{s().dc=clamp(num(e.target.value,10),1,40);save();});
+  document.querySelectorAll('input[name=onSuccess]').forEach(r=>r.addEventListener('change',e=>{s().onSuccess=e.target.value;save();}));
+  $('#spIsSpell').addEventListener('change',e=>{s().isSpell=e.target.checked;save();});
+  $('#spPerTarget').addEventListener('change',e=>{s().perTarget=e.target.checked;save();});
+  $('#natRule').addEventListener('change',e=>{state.rules.nat=e.target.checked;save();recompute();});
+  $('#parts').addEventListener('input',e=>{const i=e.target.dataset.p;if(i==null)return;s().parts[i][e.target.dataset.pf]=e.target.value;save();});
+  $('#parts').addEventListener('change',e=>{const i=e.target.dataset.p;if(i==null)return;s().parts[i][e.target.dataset.pf]=e.target.value;save();});
+  $('#parts').addEventListener('click',e=>{const i=e.target.dataset.delpart;if(i==null)return;s().parts.splice(i,1);save();renderParts();});
+  $('#addPart').addEventListener('click',()=>{s().parts.push({dice:'',type:'fire'});save();renderParts();$('#parts input:last-of-type')?.focus();});
+  $('#preset').addEventListener('change',e=>{
+    const v=e.target.value;if(!v)return;
+    const src=v[0]==='c'?state.custom[+v.slice(1)]:BUILTIN[+v.slice(1)];
+    if(!src)return;
+    const dc=state.spell.dc,per=state.spell.perTarget;
+    state.spell=JSON.parse(JSON.stringify(src));
+    state.spell.dc=src.dc||dc;state.spell.perTarget=src.perTarget??per;
+    save();renderSpell();
+  });
+  $('#saveSpell').addEventListener('click',()=>{
+    const sp=JSON.parse(JSON.stringify(state.spell));
+    if(!sp.name.trim()){toast('Give the spell a name first.');return;}
+    const i=state.custom.findIndex(c=>c.name.toLowerCase()===sp.name.trim().toLowerCase());
+    if(i>=0)state.custom[i]=sp;else state.custom.push(sp);
+    state.custom.sort((a,b)=>a.name.localeCompare(b.name));
+    save();renderPresets();toast(`Saved “${sp.name}” to My spells.`);
+  });
+  $('#delSpell').addEventListener('click',()=>{
+    const i=state.custom.findIndex(c=>c.name.toLowerCase()===state.spell.name.trim().toLowerCase());
+    if(i<0){toast('That spell isn’t in My spells.');return;}
+    if(!confirm(`Delete “${state.custom[i].name}” from My spells?`))return;
+    state.custom.splice(i,1);save();renderPresets();toast('Deleted.');
+  });
+  $('#rollBtn').addEventListener('click',doRoll);
+}
+
+// ---------- groups ----------
+function renderGroups(){
+  const box=$('#groups');
+  const fk=document.activeElement?.dataset?.k;
+  box.innerHTML=state.groups.map(groupHTML).join('')||'<p class="muted">No enemies yet. Click <b>+ Add enemy group</b>.</p>';
+  if(fk){const el=box.querySelector(`[data-k="${CSS.escape(fk)}"]`);if(el){el.focus();if(el.select&&el.type!=='checkbox')try{el.select();}catch(e){}}}
+  updateTargetCount();
+}
+function groupHTML(g){
+  const up=g.enemies.filter(e=>e.hp>0).length, K=f=>`data-k="${g.id}-${f}"`;
+  const saves=ABILS.map(a=>`<label>${a.toUpperCase()}<input type="number" data-save="${a}" ${K(a)} value="${g.saves[a]}"></label>`).join('');
+  const chips=DMG_TYPES.map(d=>`<button class="chip ${g.dmg[d]||''}" data-act="chip" data-type="${d}" title="${g.dmg[d]||'normal'}">${d}</button>`).join('');
+  const enemies=g.enemies.map(e=>{
+    const pct=e.max>0?clamp(e.hp/e.max*100,0,100):0, cls=pct<=25?'low':pct<=50?'mid':'';
+    const lr=g.lr>0?`<span class="lr" title="Legendary Resistance left">${'◆'.repeat(e.lrLeft)}${'◇'.repeat(Math.max(0,g.lr-e.lrLeft))}</span>`:'';
+    return `<div class="enemy${e.hp<=0?' dead':''}" data-eid="${e.id}">
+      <input type="checkbox" data-e="target" ${K(e.id+'t')} ${e.target?'checked':''} title="Caught in the spell">
+      <div><div class="nm">${e.hp<=0?'💀 ':''}${esc(label(g,e))} ${lr}</div><div class="bar ${cls}"><i style="width:${pct}%"></i></div></div>
+      <div class="ectl">
+        <input type="number" data-e="hp" ${K(e.id+'h')} value="${e.hp}" title="Current HP"><span class="muted">/</span>
+        <input type="number" data-e="max" ${K(e.id+'m')} value="${e.max}" title="Max HP">
+        <input type="number" data-e="temp" ${K(e.id+'x')} value="${e.temp}" title="Temporary HP" placeholder="temp" style="width:48px">
+        <input type="number" data-e="amt" ${K(e.id+'a')} placeholder="amt" title="Amount" style="width:56px">
+        <button class="small" data-act="hurt" title="Deal damage">−</button><button class="small" data-act="heal" title="Heal">+</button>
+      </div></div>`;}).join('');
+  return `<div class="group${closed.has(g.id)?' closed':''}" data-gid="${g.id}">
+    <div class="ghead">
+      <span class="handle" title="Drag to reorder">⠿</span>
+      <button class="collapse" data-act="toggle" title="Show/hide">▾</button>
+      <input class="gname" data-f="name" ${K('name')} value="${esc(g.name)}">
+      <label class="alive">× <input type="number" data-f="count" ${K('count')} min="1" max="100" value="${g.count}" title="How many"></label>
+      <span class="alive">${up}/${g.enemies.length} standing</span>
+      <button class="icon" data-act="dup" title="Duplicate group">⧉</button>
+      <button class="icon danger" data-act="delgroup" title="Delete group">✕</button>
+    </div>
+    <div class="gbody">
+      <div class="row">
+        <label><span class="lbl">HP each</span><input data-f="hp" ${K('hp')} value="${esc(g.hp)}" style="width:110px" placeholder="7 or 2d6"></label>
+        <button class="small" data-act="resethp" title="Give every enemy in this group fresh HP">Reset all HP</button>
+      </div>
+      <div class="lbl">Saving throw modifiers</div>
+      <div class="saves">${saves}</div>
+      <div class="opts">
+        <label><select data-f="adv" ${K('adv')}><option value="normal">Normal saves</option><option value="adv"${g.adv==='adv'?' selected':''}>Advantage on all saves</option><option value="dis"${g.adv==='dis'?' selected':''}>Disadvantage on all saves</option></select></label>
+        <label><select data-f="cover" ${K('cover')}><option value="0">No cover</option><option value="2"${g.cover==2?' selected':''}>Half cover (+2 DEX)</option><option value="5"${g.cover==5?' selected':''}>¾ cover (+5 DEX)</option></select></label>
+        <label><input type="checkbox" data-f="magicRes" ${K('mr')} ${g.magicRes?'checked':''}> Magic Resistance (adv. vs spells)</label>
+        <label><input type="checkbox" data-f="evasion" ${K('ev')} ${g.evasion?'checked':''}> Evasion (DEX saves)</label>
+        <label><input type="checkbox" data-f="autoFail" ${K('af')} ${g.autoFail?'checked':''}> Auto-fail STR &amp; DEX (paralyzed, stunned, unconscious, petrified)</label>
+        <label>Extra to saves <input data-f="bonus" ${K('bonus')} value="${esc(g.bonus)}" placeholder="-1d4" style="width:80px" title="e.g. -1d4 for Bane, +2"></label>
+        <label>Legendary Resistance <input type="number" data-f="lr" ${K('lr')} min="0" max="9" value="${g.lr}" style="width:56px"> /day</label>
+      </div>
+      <div class="lbl">Damage resistances</div>
+      <div class="chips">${chips}</div>
+      <div class="lbl">Enemies <span style="text-transform:none">(current / max HP, temp HP)</span></div>
+      <div class="enemies">${enemies}</div>
+      <div class="gactions">
+        <button class="small" data-act="all">Target all</button>
+        <button class="small" data-act="none">Target none</button>
+        <button class="small" data-act="fullheal">Full heal</button>
+        <button class="small" data-act="resetlr">Reset Legendary Res.</button>
+        <button class="small danger" data-act="cleardead">Remove defeated</button>
+      </div>
+    </div></div>`;
+}
+function updateTargetCount(){
+  const n=state.groups.reduce((a,g)=>a+g.enemies.filter(e=>e.target&&e.hp>0).length,0);
+  $('#targetCount').textContent=n?`${n} enem${n===1?'y':'ies'} targeted`:'No enemies targeted';
+}
+function lockLast(){if(state.last&&!state.last.locked){state.last.locked=true;renderResults();}}
+function bindGroups(){
+  const box=$('#groups');
+  const ctx=t=>{const card=t.closest('.group');if(!card)return {};const g=findG(card.dataset.gid);const row=t.closest('.enemy');const e=row&&g?g.enemies.find(x=>x.id===row.dataset.eid):null;return {g,e};};
+  box.addEventListener('input',ev=>{
+    const t=ev.target,{g}=ctx(t);if(!g)return;
+    const f=t.dataset.f;
+    if(f==='name'||f==='hp'||f==='bonus'){g[f]=t.value;save();}
+  });
+  box.addEventListener('change',ev=>{
+    const t=ev.target,{g,e}=ctx(t);if(!g)return;
+    const f=t.dataset.f;
+    if(f){
+      if(f==='count'){setCount(g,t.value);lockLast();}
+      else if(f==='lr'){g.lr=clamp(num(t.value),0,9);g.enemies.forEach(x=>x.lrLeft=g.lr);lockLast();}
+      else if(f==='cover')g.cover=num(t.value);
+      else if(t.type==='checkbox')g[f]=t.checked;
+      else g[f]=t.value;
+      save();recompute();return;
+    }
+    if(t.dataset.save){g.saves[t.dataset.save]=num(t.value);save();recompute();return;}
+    if(e&&t.dataset.e){
+      const k=t.dataset.e;
+      if(k==='target'){e.target=t.checked;save();updateTargetCount();return;}
+      if(k==='amt')return;
+      e[k]=Math.max(0,num(t.value));
+      if(k==='max'&&e.hp>e.max)e.hp=e.max;
+      lockLast();save();renderGroups();
+    }
+  });
+  box.addEventListener('keydown',ev=>{if(ev.key==='Enter'&&ev.target.dataset.e==='amt'){ev.preventDefault();ev.target.closest('.enemy').querySelector('[data-act=hurt]').click();}});
+  box.addEventListener('click',ev=>{
+    const b=ev.target.closest('[data-act]');if(!b)return;
+    const {g,e}=ctx(b);if(!g)return;
+    const a=b.dataset.act;
+    if(a==='toggle'){closed.toggle(g.id);b.closest('.group').classList.toggle('closed');return;}
+    if(a==='chip'){const d=b.dataset.type,cyc={undefined:'resist',resist:'immune',immune:'vuln',vuln:undefined};const n=cyc[g.dmg[d]];if(n)g.dmg[d]=n;else delete g.dmg[d];save();recompute();return;}
+    if(a==='hurt'||a==='heal'){
+      const amt=Math.max(0,num(b.closest('.enemy').querySelector('[data-e=amt]').value));if(!amt)return;
+      if(a==='heal')e.hp=Math.min(e.max,e.hp+amt);
+      else{const ab=Math.min(e.temp,amt);e.temp-=ab;e.hp=Math.max(0,e.hp-(amt-ab));}
+      lockLast();save();renderGroups();return;
+    }
+    if(a==='delgroup'){if(!confirm(`Delete the ${g.name} group?`))return;state.groups=state.groups.filter(x=>x!==g);lockLast();}
+    else if(a==='dup'){const c=JSON.parse(JSON.stringify(g));c.id=uid();c.name=g.name+' (copy)';c.enemies=[];setCount(c,g.count);state.groups.splice(state.groups.indexOf(g)+1,0,c);}
+    else if(a==='resethp'){g.enemies.forEach(x=>{x.hp=x.max=rollHp(g.hp);x.temp=0;});lockLast();}
+    else if(a==='fullheal'){g.enemies.forEach(x=>{x.hp=x.max;});lockLast();}
+    else if(a==='resetlr'){g.enemies.forEach(x=>x.lrLeft=g.lr);lockLast();}
+    else if(a==='cleardead'){const keep=g.enemies.filter(x=>x.hp>0);if(!keep.length){toast('Everyone in this group is down — delete the group instead.');return;}g.enemies=keep;g.count=keep.length;lockLast();}
+    else if(a==='all')g.enemies.forEach(x=>x.target=x.hp>0);
+    else if(a==='none')g.enemies.forEach(x=>x.target=false);
+    save();renderGroups();
+  });
+  // drag reorder
+  let drag=null;
+  box.addEventListener('pointerdown',ev=>{
+    const h=ev.target.closest('.handle');if(!h)return;
+    ev.preventDefault();
+    const card=h.closest('.group');
+    const line=document.createElement('div');line.className='dropline';line.style.display='none';box.style.position='relative';box.appendChild(line);
+    drag={card,line,to:null};card.classList.add('dragging');h.setPointerCapture(ev.pointerId);
+  });
+  box.addEventListener('pointermove',ev=>{
+    if(!drag)return;
+    const cards=[...box.querySelectorAll('.group')];let to=cards.length;
+    for(let i=0;i<cards.length;i++){const r=cards[i].getBoundingClientRect();if(ev.clientY<r.top+r.height/2){to=i;break;}}
+    drag.to=to;
+    const br=box.getBoundingClientRect();
+    const y=to<cards.length?cards[to].getBoundingClientRect().top-br.top-7:cards[cards.length-1].getBoundingClientRect().bottom-br.top+4;
+    drag.line.style.display='block';drag.line.style.top=y+'px';
+  });
+  const end=()=>{
+    if(!drag)return;
+    const {card,line,to}=drag;drag=null;line.remove();card.classList.remove('dragging');
+    if(to==null)return;
+    const from=state.groups.findIndex(g=>g.id===card.dataset.gid);
+    let dest=to>from?to-1:to;
+    if(dest!==from){const [g]=state.groups.splice(from,1);state.groups.splice(dest,0,g);save();renderGroups();}
+  };
+  box.addEventListener('pointerup',end);box.addEventListener('pointercancel',end);
+  $('#addGroup').addEventListener('click',()=>{
+    const g=newGroup();state.groups.push(g);save();renderGroups();
+    const el=box.querySelector(`[data-gid="${g.id}"]`);el.scrollIntoView({behavior:'smooth',block:'center'});const n=el.querySelector('.gname');n.focus();n.select();
+  });
+}
+
+// ---------- rolling ----------
+function doRoll(){
+  const sp=state.spell;
+  const parts=sp.parts.filter(p=>String(p.dice).trim());
+  for(const p of parts)if(!parseDice(p.dice).ok){toast(`Can't read the damage “${p.dice}”. Use something like 8d6 or 3d8+4.`);return;}
+  for(const g of state.groups)if(g.bonus.trim()&&!parseDice(g.bonus).ok){toast(`Can't read “${g.bonus}” in Extra to saves for ${g.name}.`);return;}
+  const recs=[];
+  for(const g of state.groups)for(const e of g.enemies){
+    if(!e.target||e.hp<=0)continue;
+    recs.push({gid:g.id,eid:e.id,d20:[rnd(20),rnd(20)],bonusF:g.bonus,bonus:g.bonus.trim()?rollDice(g.bonus):null,
+      dmg:sp.perTarget?parts.map(p=>({type:p.type,dice:p.dice,...rollDice(p.dice)})):null,lrUsed:false,
+      before:{hp:e.hp,temp:e.temp,lrLeft:e.lrLeft}});
+  }
+  if(!recs.length){toast('Tick at least one enemy that is still standing.');return;}
+  state.last={id:uid(),spell:JSON.parse(JSON.stringify(sp)),dmg:sp.perTarget?null:parts.map(p=>({type:p.type,dice:p.dice,...rollDice(p.dice)})),recs,locked:false};
+  state.log.unshift({id:state.last.id,text:''});state.log.length=Math.min(state.log.length,30);
+  recompute();
+}
+function evalRec(rec,L){
+  const g=findG(rec.gid),e=g&&g.enemies.find(x=>x.id===rec.eid);if(!e)return null;
+  const sp=L.spell,ab=sp.ability;
+  let adv=0,dis=0;
+  if(g.adv==='adv')adv++;if(g.adv==='dis')dis++;
+  if(g.magicRes&&sp.isSpell)adv++;
+  const mode=adv&&!dis?'adv':dis&&!adv?'dis':'normal';
+  const [a,b]=rec.d20,kept=mode==='adv'?Math.max(a,b):mode==='dis'?Math.min(a,b):a;
+  if(rec.bonusF!==g.bonus){rec.bonusF=g.bonus;rec.bonus=g.bonus.trim()&&parseDice(g.bonus).ok?rollDice(g.bonus):null;}
+  const mod=num(g.saves[ab]),cover=ab==='dex'?num(g.cover):0,bonus=rec.bonus?rec.bonus.total:0;
+  const total=kept+mod+cover+bonus;
+  let pass,why='';
+  if(g.autoFail&&(ab==='str'||ab==='dex')){pass=false;why='auto-fail';}
+  else if(state.rules.nat&&kept===20){pass=true;why='nat 20';}
+  else if(state.rules.nat&&kept===1){pass=false;why='nat 1';}
+  else pass=total>=sp.dc;
+  const lrSpent=!pass&&rec.lrUsed&&rec.before.lrLeft>0;
+  if(lrSpent){pass=true;why='Legendary Resistance';}
+  const evade=g.evasion&&ab==='dex'&&sp.onSuccess==='half';
+  let dmg=0;const notes=[];
+  for(const p of (rec.dmg||L.dmg||[])){
+    let d=Math.max(0,p.total);
+    if(pass){if(sp.onSuccess==='none'||evade)d=0;else d=Math.floor(d/2);}
+    else if(evade)d=Math.floor(d/2);
+    const m=g.dmg[p.type];
+    if(m==='immune'){if(d)notes.push(`immune ${p.type}`);d=0;}
+    else if(m==='resist'){if(d)notes.push(`resists ${p.type}`);d=Math.floor(d/2);}
+    else if(m==='vuln'){if(d)notes.push(`vulnerable ${p.type}`);d*=2;}
+    dmg+=d;
+  }
+  if(evade)notes.push('evasion');
+  return {g,e,mode,kept,mod,cover,bonus,total,pass,why,lrSpent,dmg,notes,canLR:!pass&&rec.before.lrLeft>0};
+}
+function recompute(){
+  const L=state.last;
+  if(!L||L.locked){save();renderGroups();renderResults();return;}
+  let passN=0,failN=0,downN=0,dmgT=0;
+  for(const rec of L.recs){
+    const r=evalRec(rec,L);rec.out=null;if(!r)continue;
+    const {e}=r,b=rec.before;
+    const ab=Math.min(b.temp,r.dmg);
+    e.temp=b.temp-ab;e.hp=Math.max(0,b.hp-(r.dmg-ab));e.lrLeft=b.lrLeft-(r.lrSpent?1:0);
+    rec.out={pass:r.pass,dmg:r.dmg,down:b.hp>0&&e.hp<=0};
+    r.pass?passN++:failN++;if(rec.out.down)downN++;dmgT+=r.dmg;
+  }
+  L.sum={passN,failN,downN,dmgT};
+  const entry=state.log.find(x=>x.id===L.id);
+  if(entry)entry.text=`${L.spell.name||'Effect'} (DC ${L.spell.dc} ${L.spell.ability.toUpperCase()}): ${failN} failed, ${passN} passed, ${downN} dropped, ${dmgT} total damage`;
+  save();renderGroups();renderResults();
+}
+function undo(){
+  const L=state.last;if(!L)return;
+  for(const rec of L.recs){const g=findG(rec.gid),e=g&&g.enemies.find(x=>x.id===rec.eid);if(e){e.hp=rec.before.hp;e.temp=rec.before.temp;e.lrLeft=rec.before.lrLeft;}}
+  state.log=state.log.filter(x=>x.id!==L.id);state.last=null;save();renderGroups();renderResults();toast('Roll undone — HP restored.');
+}
+function renderResults(){
+  const box=$('#results'),L=state.last;
+  $('#undoBtn').hidden=!L;
+  $('#history').innerHTML=state.log.filter(x=>x.text).map(x=>`<li>${esc(x.text)}</li>`).join('')||'<span class="muted">Nothing rolled yet.</span>';
+  if(!L){box.innerHTML='<p class="muted">Pick your spell, tick the enemies caught in it, then hit <b>Roll saves</b>.</p>';return;}
+  const sp=L.spell,dis=L.locked?'disabled':'';
+  const s=L.sum||{passN:0,failN:0,downN:0,dmgT:0};
+  const dparts=L.dmg&&L.dmg.length?`<div class="dmgparts"><div class="lbl">Damage rolled (once for everyone) — you can type over it</div>${L.dmg.map((p,j)=>`<div class="dp"><input type="number" min="0" data-dmg="${j}" value="${p.total}" ${dis}> <b>${esc(p.type)}</b> <span class="dice">${esc(p.dice)}: ${esc(p.text)}</span></div>`).join('')}</div>`:'';
+  const rows=L.recs.map((rec,i)=>{
+    const r=evalRec(rec,L);if(!r)return '';
+    const both=r.mode!=='normal';
+    const d20=both?`<input type="number" min="1" max="20" data-d20="${i}" data-d="0" value="${rec.d20[0]}" class="${r.kept===rec.d20[0]?'kept':''}" ${dis}> <input type="number" min="1" max="20" data-d20="${i}" data-d="1" value="${rec.d20[1]}" class="${r.kept===rec.d20[1]&&r.kept!==rec.d20[0]?'kept':''}" ${dis}><span class="tag">${r.mode==='adv'?'advantage':'disadvantage'}</span>`
+      :`<input type="number" min="1" max="20" data-d20="${i}" data-d="0" value="${rec.d20[0]}" ${dis}>`;
+    const modTxt=[sgn(r.mod)+' save',r.cover?sgn(r.cover)+' cover':'',rec.bonus?sgn(r.bonus)+' ('+esc(rec.bonus.text)+')':''].filter(Boolean).join('<br>');
+    const lrBtn=rec.lrUsed&&r.lrSpent?`<button class="small" data-lr="${i}" ${dis} title="Undo the Legendary Resistance">↩ LR</button>`:r.canLR?`<button class="small" data-lr="${i}" ${dis} title="Spend a Legendary Resistance to pass">Use LR</button>`:'';
+    const dmgCell=(rec.dmg?`<span class="tag">${rec.dmg.map(p=>`${p.total} ${esc(p.type)}`).join(' + ')}</span>`:'')+`<b>${r.dmg}</b>${r.notes.length?`<span class="tag">${esc(r.notes.join(', '))}</span>`:''}`;
+    const hpCell=`${rec.before.hp}${rec.before.temp?`<span class="tag">+${rec.before.temp} temp</span>`:''} → <b class="${r.e.hp<=0?'down':''}">${r.e.hp<=0?'💀 0':r.e.hp}</b>`;
+    return `<tr><td><b>${esc(label(r.g,r.e))}</b></td><td>${d20}</td><td class="muted" style="font-size:12px">${modTxt}</td>
+      <td><b>${r.total}</b></td><td><span class="badge ${r.pass?'pass':'fail'}">${r.pass?'PASS':'FAIL'}</span>${r.why?`<span class="tag">${esc(r.why)}</span>`:''}${lrBtn}</td>
+      <td>${dmgCell}</td><td>${hpCell}</td></tr>`;}).join('');
+  box.innerHTML=`<div><b>${esc(sp.name||'Effect')}</b> — <span class="muted">${sp.ability.toUpperCase()} save, DC</span> <input type="number" id="resDC" min="1" max="40" value="${sp.dc}" ${dis}> <span class="muted">· ${sp.onSuccess==='half'?'half damage':'no damage'} on a pass</span></div>
+    <div class="sumline"><span class="pill fail">${s.failN} failed</span><span class="pill pass">${s.passN} passed</span><span class="pill down">💀 ${s.downN} dropped</span><span class="pill down">${s.dmgT} damage dealt</span></div>
+    ${L.locked?'<div class="locked">Locked because enemies were changed by hand. Undo still puts HP back to before this roll.</div>':'<div class="hint">Damage is already applied to the enemies. Rolled real dice? Type your numbers in and everything updates.</div>'}
+    ${dparts}
+    <div class="tablewrap"><table class="res"><thead><tr><th>Enemy</th><th>d20</th><th>Bonus</th><th>Total</th><th>Result</th><th>Damage</th><th>HP</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function bindResults(){
+  const box=$('#results');
+  box.addEventListener('change',ev=>{
+    const t=ev.target,L=state.last;if(!L||L.locked)return;
+    if(t.id==='resDC'){L.spell.dc=clamp(num(t.value,L.spell.dc),1,40);}
+    else if(t.dataset.d20!=null){L.recs[t.dataset.d20].d20[t.dataset.d]=clamp(num(t.value,10),1,20);}
+    else if(t.dataset.dmg!=null){L.dmg[t.dataset.dmg].total=Math.max(0,num(t.value));L.dmg[t.dataset.dmg].text='typed in';}
+    else return;
+    recompute();
+  });
+  box.addEventListener('click',ev=>{
+    const b=ev.target.closest('[data-lr]');if(!b||!state.last||state.last.locked)return;
+    const rec=state.last.recs[b.dataset.lr];rec.lrUsed=!rec.lrUsed;recompute();
+  });
+  $('#undoBtn').addEventListener('click',undo);
+}
+
+// ---------- backup ----------
+function bindBackup(){
+  $('#exportBtn').addEventListener('click',()=>{
+    const blob=new Blob([JSON.stringify(state,null,1)],{type:'application/json'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`mass-save-roller-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  });
+  $('#importBtn').addEventListener('click',()=>$('#importFile').click());
+  $('#importFile').addEventListener('change',async ev=>{
+    const f=ev.target.files[0];if(!f)return;
+    try{const s=JSON.parse(await f.text());if(!Array.isArray(s.groups)||!s.spell)throw 0;
+      if(!confirm('Replace everything on this page with the backup?'))return;
+      state=Object.assign(defaultState(),s);save();renderAll();toast('Backup restored.');}
+    catch(e){toast('That file is not a Mass Save Roller backup.');}
+    ev.target.value='';
+  });
+}
+
+function renderAll(){renderPresets();renderSpell();renderGroups();renderResults();}
+load();bindSpell();bindGroups();bindResults();bindBackup();renderAll();
+</script>
+</body>
+</html>
