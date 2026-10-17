@@ -14,6 +14,7 @@ p{margin:6px 0}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin:18px 0}
 .card h2{margin:0 0 10px;font-size:18px;color:var(--gold2)}
 .btn{display:block;text-align:center;background:linear-gradient(#e2bb63,#b98d34);color:#1b1408;font-weight:800;font-size:18px;padding:14px;border-radius:10px;text-decoration:none;margin:10px 0}
+.btn.bm{cursor:grab;display:inline-block;padding:12px 26px}
 .btn.alt{background:#2a2431;color:var(--text);border:1px solid var(--gold)}
 ol{padding-left:22px;margin:8px 0}li{margin:6px 0}
 code{background:#181420;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:14px;user-select:all}
@@ -32,26 +33,22 @@ code{background:#181420;border:1px solid var(--line);border-radius:5px;padding:1
   </div>
 
   <div class="card">
-    <h2>Using it with Roll20 (one-time setup, ~1 minute)</h2>
-    <a class="btn alt" href="/roll20-addon.zip" download>⬇ Download the Roll20 add-on</a>
-    <ol>
-      <li>Open the downloaded file and drag the <b>roll20-addon</b> folder onto your Desktop (or anywhere you'll keep it).</li>
-      <li>In Chrome, open <code>chrome://extensions</code> <span class="muted">(copy it into the address bar)</span>.</li>
-      <li>Turn on <b>Developer mode</b> (top-right switch).</li>
-      <li>Click <b>Load unpacked</b> and pick the <b>roll20-addon</b> folder.</li>
-      <li>Open your Roll20 game, then <a href="/" style="color:var(--gold2)">the website</a>. Tick <b>Roll the d20s in Roll20</b>.</li>
-      <li>First time only: the website shows <b>Set it up (one time)</b> — click it, then click <b>Install it for me</b> on the Roll20 page that opens.</li>
-    </ol>
+    <h2>Using it with Roll20 — nothing to install</h2>
+    <p>Drag this gold button up onto your bookmarks bar <span class="muted">(press Ctrl+Shift+B if you don't see the bar)</span>:</p>
+    <a class="btn bm" href="javascript:(async()=>{window.__msrWin=window.open('https://mass-save-roller.vercel.app/?r20=1','massSaveRoller','popup,width=600,height=900');const t=await (await fetch('https://mass-save-roller.vercel.app/r20.js?'+Date.now())).text();(0,eval)(t)})()" onclick="event.preventDefault();this.textContent='Drag me up to the bookmarks bar ↑'">⚔️ Mass Save</a>
+    <p>Then, in your Roll20 game, click the <b>⚔️ Mass Save</b> bookmark. The roller opens in its own window, linked to Roll20.</p>
+    <p class="muted">Click it once each time you open or reload Roll20. Changing maps is fine.</p>
   </div>
 
   <div class="card">
     <h2>How a mass save goes</h2>
     <ol>
       <li>In Roll20, select the monster tokens caught in the spell.</li>
-      <li>On the website click <b>⬇ Get selected tokens</b>, type their save modifiers (once), the DC and the damage.</li>
+      <li>In the roller click <b>⬇ Get selected tokens</b>. Type their save modifiers (once), the DC and the damage.</li>
       <li>Click <b>Start</b>, then in Roll20 type <code>/r 8d20</code> (one d20 per monster).</li>
       <li>Done — passes and fails are worked out and the selected tokens' HP goes down in Roll20. Tokens you didn't select are never touched.</li>
     </ol>
+    <p class="muted">Tokens you made from your own images work too — if their HP bar is empty, the roller fills it in with “HP each”.</p>
   </div>
 </main>
 </body>

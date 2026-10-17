@@ -104,6 +104,7 @@ header .sp{flex:1}
 .r20box>label{display:flex;gap:8px;align-items:center;margin:4px 0}
 .r20box .sub{margin-left:26px}
 .r20box.off .sub{display:none}
+.bmlink{display:inline-block;background:linear-gradient(#e2bb63,#b98d34);color:#1b1408!important;font-weight:800;padding:4px 10px;border-radius:7px;text-decoration:none;cursor:grab;margin:4px 0}
 .r20box details{margin-top:6px}.r20box ol{padding-left:18px;margin:6px 0}.r20box a{color:var(--gold2)}
 .ok{color:var(--pass)}.bad{color:var(--fail)}.warn{color:var(--warn)}
 .waiting{border:1px dashed var(--gold);border-radius:8px;padding:10px;background:#231d14}
@@ -155,12 +156,11 @@ header .sp{flex:1}
         <label class="sub hpopt">HP is on bar <select id="r20Bar"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
         <label class="sub hpopt"><input type="checkbox" id="r20Dead"> Mark tokens at 0 HP as dead</label>
         <div id="r20Status" class="hint"></div>
-        <details class="hint"><summary>How to install the Roll20 add-on (one time)</summary>
+        <details class="hint"><summary>How to link Roll20 (get the bookmark)</summary>
           <ol>
-            <li><a href="roll20-addon.zip" download>Download the add-on</a> and unzip it somewhere you'll keep it.</li>
-            <li>In Chrome go to <b>chrome://extensions</b> and switch on <b>Developer mode</b> (top right).</li>
-            <li>Click <b>Load unpacked</b> and pick the unzipped <b>roll20-addon</b> folder.</li>
-            <li>Refresh this page and your Roll20 tab.</li>
+            <li>Drag this button onto your bookmarks bar (Ctrl+Shift+B shows the bar): <a class="bmlink" href="javascript:(async()=>{window.__msrWin=window.open('https://mass-save-roller.vercel.app/?r20=1','massSaveRoller','popup,width=600,height=900');const t=await (await fetch('https://mass-save-roller.vercel.app/r20.js?'+Date.now())).text();(0,eval)(t)})()" onclick="event.preventDefault();this.textContent='Drag me to the bookmarks bar ↑'">⚔️ Mass Save</a></li>
+            <li>In your Roll20 game, click the bookmark. This window opens linked to Roll20.</li>
+            <li>Click it again whenever you reload Roll20.</li>
           </ol>
         </details>
       </div>
@@ -310,9 +310,10 @@ function renderR20(){
   $('#rollBtn').textContent=on?'🎲 Start — then roll in Roll20':'🎲 Roll saves';
   const st=$('#r20Status');
   if(!on){st.innerHTML='';return;}
-  st.innerHTML=ext.state==='checking'?'Looking for the Roll20 add-on…'
+  st.innerHTML=ext.state==='checking'?'Looking for Roll20…'
     :ext.state==='stale'?'<span class="warn">⚠️ The add-on was updated or reloaded. Refresh this page.</span>'
-    :ext.state==='none'?'<span class="bad">❌ Roll20 add-on not found in this Chrome.</span> Install it below, or untick this to roll here.'
+    :ext.state==='none'?'<span class="bad">❌ Not linked to Roll20.</span> In your Roll20 game, click the <b>⚔️ Mass Save</b> bookmark (get it below), or untick this to roll here.'
+    :ext.direct?`<span class="ok">✅ Linked to Roll20</span>`
     :ext.roll20Open?`<span class="ok">✅ Add-on connected · Roll20 game open</span>`+(!state.rules.r20Hp?'':ext.script==='ok'?' <span class="ok">· HP link ready</span>':ext.script==='checking'?' · checking the HP link…':ext.script==='missing'?`<br><span class="warn">⚠️ The HP link isn’t set up in this Roll20 game yet.</span> <button class="small" data-setup>Set it up (one time)</button> <button class="small" data-recheck>Check again</button>`:'')
     :`<span class="warn">⚠️ Add-on connected, but no Roll20 game is open in this Chrome.</span>`;
 }
@@ -458,7 +459,7 @@ function bindGroups(){
     }
     if(a==='delgroup'){if(!armed(b,'Delete?'))return;state.groups=state.groups.filter(x=>x!==g);lockLast();}
     else if(a==='dup'){const c=JSON.parse(JSON.stringify(g));c.id=uid();c.name=g.name+' (copy)';c.enemies=[];setCount(c,g.count);state.groups.splice(state.groups.indexOf(g)+1,0,c);}
-    else if(a==='resethp'){g.enemies.forEach(x=>{x.hp=x.max=rollHp(g.hp);x.temp=0;});lockLast();}
+    else if(a==='resethp'){g.enemies.forEach(x=>{x.hp=x.max=rollHp(g.hp);x.temp=0;if(x.tokenId){x.needInit=true;x.synced=null;x.blocked=false;}});lockLast();}
     else if(a==='fullheal'){g.enemies.forEach(x=>{x.hp=x.max;});lockLast();}
     else if(a==='resetlr'){g.enemies.forEach(x=>x.lrLeft=g.lr);lockLast();}
     else if(a==='cleardead'){const keep=g.enemies.filter(x=>x.hp>0);if(!keep.length){toast('Everyone in this group is down — delete the group instead.');return;}g.enemies=keep;g.count=keep.length;lockLast();}
@@ -546,14 +547,28 @@ function startResult(R){
 // ---------- Roll20 link ----------
 const ext={state:'checking',roll20Open:false,version:null,script:'unknown'};
 let pingTimer=null;
+// Two ways to reach Roll20: the "⚔️ Mass Save" bookmark (this page is then a window opened by the
+// Roll20 tab, reached through window.opener) or the older Chrome add-on (same window).
+const ROLL20_ORIGIN='https://app.roll20.net';
+function linkPost(msg){
+  msg=Object.assign({source:'msr-page'},msg);
+  try{if(window.opener&&!window.opener.closed)window.opener.postMessage(msg,ROLL20_ORIGIN);}catch(e){}
+  window.postMessage(msg,location.origin);
+}
 function pingExt(){
   clearTimeout(pingTimer);
-  window.postMessage({source:'msr-page',type:'ping'},location.origin);
+  linkPost({type:'ping'});
   pingTimer=setTimeout(()=>{if(ext.state==='checking'){ext.state='none';renderR20();logEv('ext','not found');}},1500);
 }
+// The link drops if Roll20 is reloaded or closed; notice that instead of failing silently.
+setInterval(()=>{if(ext.direct&&(!window.opener||window.opener.closed)){ext.direct=false;ext.state='none';ext.roll20Open=false;renderR20();logEv('ext','roll20 window gone');}},3000);
 window.addEventListener('message',ev=>{
-  const d=ev.data;if(ev.source!==window||!d||d.source!=='msr-ext')return;
-  if(d.type==='pong'){const was=ext.state+ext.roll20Open;ext.state='ok';ext.roll20Open=d.roll20Open;ext.version=d.version;renderR20();checkScript();if(was!==ext.state+ext.roll20Open)logEv('ext',`connected v${d.version}, roll20 open: ${d.roll20Open}`);}
+  const d=ev.data;if(!d||d.source!=='msr-ext')return;
+  const fromRoll20=ev.origin===ROLL20_ORIGIN&&ev.source===window.opener;
+  if(ev.source!==window&&!fromRoll20)return;
+  if(d.type==='pong'){const was=ext.state+ext.roll20Open;ext.state='ok';ext.roll20Open=d.roll20Open;ext.version=d.version;
+    if(d.direct){ext.direct=true;ext.script='ok';}
+    renderR20();checkScript();if(was!==ext.state+ext.roll20Open)logEv('ext',`connected v${d.version}${d.direct?' (bookmark)':''}, roll20 open: ${d.roll20Open}`);}
   else if(d.type==='stale'){ext.state='stale';renderR20();logEv('ext','stale (add-on reloaded)');}
   else if(d.type==='roll'){ext.state='ok';ext.roll20Open=true;renderR20();onRoll20Roll(d.roll);}
   else if(d.type==='cmdack'){if(!d.ok){const w=r20wait.get(d.req);if(w){r20wait.delete(d.req);clearTimeout(w.timer);w.rej(new Error(d.error||'failed'));}}}
@@ -593,12 +608,13 @@ function r20Send(text){
   return new Promise((res,rej)=>{
     const timer=setTimeout(()=>{r20wait.delete(req);rej(new Error('noreply'));},7000);
     r20wait.set(req,{res,rej,timer});
-    window.postMessage({source:'msr-page',type:'cmd',req,text:text.replace('{req}',req)},location.origin);
+    linkPost({type:'cmd',req,text:text.replace('{req}',req)});
   });
 }
 function r20Problem(err){
   const why=err&&err.message;logEv('r20-problem',why);
-  if(why==='noreply'){ext.script='missing';renderR20();return 'Roll20 didn’t answer. The Mass Save script probably isn’t set up in this game yet — use “Set it up” in the Roll20 box.';}
+  if(why==='noreply'){if(!ext.direct&&ext.state==='ok'){ext.script='missing';renderR20();}return 'Roll20 didn’t answer. In your Roll20 tab, click the ⚔️ Mass Save bookmark, then try again.';}
+  if(why==='noselect')return 'Couldn’t read the selection in Roll20 — click on the map once and try again.';
   if(why==='noroll20')return 'No Roll20 game is open in this Chrome.';
   if(why==='nochat')return 'Couldn’t find the Roll20 chat box. Is the game fully loaded?';
   if(why==='stale'){ext.state='stale';renderR20();return 'The add-on was reloaded — refresh this page and the Roll20 tab.';}
@@ -644,16 +660,17 @@ function mergeTokens(tokens){
     list.forEach(({t,n})=>{
       const prev=old.get(t.id),used=new Set(g.enemies.map(e=>e.n));
       let num=n&&!used.has(n)?n:1;while(used.has(num))num++;
+      // Image tokens often have an empty HP bar: they get "HP each" and Roll20's bar is filled in.
       const hasHp=t.hp!=null;if(!hasHp)noHp++;
       const hp=hasHp?Math.max(0,t.hp):rollHp(g.hp);
       g.enemies.push({id:prev?prev.id:uid(),n:num,hp,max:Math.max(t.max||0,hp),temp:prev?prev.temp:0,lrLeft:prev?prev.lrLeft:g.lr,
-        target:true,tokenId:t.id,synced:hasHp?hp:null,noBar:!hasHp,blocked:false});
+        target:true,tokenId:t.id,synced:hasHp?hp:null,needInit:!hasHp,noBar:false,blocked:false});
     });
     g.enemies.sort((a,b)=>a.n-b.n);g.count=g.enemies.length;
   });
   state.groups=state.groups.filter(g=>g.enemies.length);
   save();renderGroups();renderResults();
-  toast(`Got ${tokens.length} token${tokens.length===1?'':'s'} from Roll20.`+(made.length?` New group${made.length>1?'s':''}: ${made.join(', ')} — type in the save modifiers.`:'')+(noHp?` ${noHp} had no HP on bar ${state.rules.r20Bar}, so they won’t be updated.`:'')+(lost?` ${lost} had HP changes that never reached Roll20 — now showing Roll20’s HP instead.`:''));
+  toast(`Got ${tokens.length} token${tokens.length===1?'':'s'} from Roll20.`+(made.length?` New group${made.length>1?'s':''}: ${made.join(', ')} — type in the save modifiers.`:'')+(noHp?` ${noHp} had no HP on bar ${state.rules.r20Bar} — gave them “HP each”. To change it, edit HP each and press Reset all HP.`:'')+(lost?` ${lost} had HP changes that never reached Roll20 — now showing Roll20’s HP instead.`:''));
 }
 // Any time a Roll20-linked enemy's HP on this page differs from what Roll20 last confirmed, the
 // difference is sent. The Mod script refuses tokens that aren't selected in Roll20 at that moment.
@@ -665,7 +682,22 @@ function scheduleSync(){
 }
 async function runSync(retry){
   if(sync.busy){sync.again=true;return;}
+  // First give empty-bar tokens (or ones whose HP was reset here) their HP and max in Roll20.
+  const inits=tokenEnemies().filter(({e})=>e.needInit&&(retry||!e.blocked));
+  if(inits.length){
+    sync.busy=true;sync.state='sending';sync.text=`Setting HP on ${inits.length} token${inits.length===1?'':'s'} in Roll20…`;renderSync();
+    try{
+      const d=await r20Send(`!msr-init {req} bar=${state.rules.r20Bar} `+inits.map(({e})=>`${e.tokenId}:${e.hp}`).join(' '));
+      const refused=new Set(d.notSelected||[]);
+      inits.forEach(({e})=>{if(refused.has(e.tokenId))e.blocked=true;else{e.needInit=false;e.synced=e.hp;e.blocked=false;}});
+      logEv('init',`set ${inits.length-refused.size}, refused ${refused.size}`);
+    }catch(err){sync.busy=false;sync.state='fail';sync.text='❌ '+r20Problem(err);save();renderSync();return;}
+    sync.busy=false;
+  }
   const list=tokenEnemies().filter(({e})=>e.synced!=null&&e.hp!==e.synced&&(retry||!e.blocked));
+  const stillBlocked=tokenEnemies().filter(({e})=>e.blocked).length;
+  if(!list.length&&stillBlocked){sync.state='blocked';sync.text=`${stillBlocked} token${stillBlocked===1?' wasn’t':'s weren’t'} selected in Roll20, so NOT changed. Select ${stillBlocked===1?'it':'them'} and press Retry.`;save();renderSync();return;}
+  if(!list.length&&inits.length){sync.state='ok';sync.text=`✅ Set HP on ${inits.length} token${inits.length===1?'':'s'} in Roll20.`;save();renderSync();return;}
   if(!list.length){if(retry){sync.state='ok';sync.text='Roll20 tokens are up to date.';renderSync();}return;}
   sync.busy=true;sync.state='sending';sync.text=`Updating ${list.length} token${list.length===1?'':'s'} in Roll20…`;renderSync();
   const sent=list.map(({e})=>({e,want:e.hp,delta:e.synced-e.hp}));
@@ -831,7 +863,9 @@ function bindBackup(){
 }
 
 function renderAll(){renderSpell();renderGroups();renderResults();renderSync();}
-load();bindSpell();bindGroups();bindResults();bindBackup();renderAll();pingExt();
+load();
+if(/[?&]r20=1\b/.test(location.search)){state.rules.roll20=true;state.rules.r20Hp=true;}  // opened by the Roll20 bookmark
+bindSpell();bindGroups();bindResults();bindBackup();renderAll();pingExt();
 logEv('page-load',`${navigator.userAgent.match(/(Chrome|Edg|Firefox|Safari)\/[\d.]+/g)?.join(' ')||'?'} roll20mode=${state.rules.roll20} groups=${state.groups.length}`);
 </script>
 </body>
