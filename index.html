@@ -22,6 +22,7 @@ button:hover{border-color:var(--gold)}
 button.primary{background:linear-gradient(#e2bb63,#b98d34);color:#1b1408;border:0;font-weight:700}
 button.big{font-size:18px;padding:12px 18px;width:100%}
 button.danger:hover{border-color:var(--fail);color:var(--fail)}
+button.armed{background:var(--fail);color:#fff;border-color:var(--fail);font-weight:700}
 button.icon{padding:4px 8px}
 button.small{padding:3px 8px;font-size:13px}
 header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--line);background:#1a1620}
@@ -276,7 +277,19 @@ const closed=(()=>{let s=new Set();try{s=new Set(JSON.parse(localStorage.getItem
 const findG=id=>state.groups.find(g=>g.id===id);
 const label=(g,e)=>g.enemies.length>1?`${g.name} ${e.n}`:g.name;
 
-function toast(msg){const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),2600);}
+function toast(msg,action,fn){
+  document.querySelectorAll('.toast').forEach(x=>x.remove());
+  const t=document.createElement('div');t.className='toast';t.textContent=msg;
+  if(action){const b=document.createElement('button');b.className='small';b.style.marginLeft='10px';b.textContent=action;b.onclick=()=>{t.remove();fn();};t.appendChild(b);}
+  document.body.appendChild(t);setTimeout(()=>t.remove(),action?7000:2600);
+}
+// First click arms the button ("Delete?"), a second click within 4 seconds confirms.
+function armed(btn,text){
+  if(btn.classList.contains('armed'))return true;
+  const old=btn.innerHTML;btn.classList.add('armed');btn.innerHTML=text;
+  setTimeout(()=>{if(btn.isConnected){btn.classList.remove('armed');btn.innerHTML=old;}},4000);
+  return false;
+}
 
 // ---------- save & damage panel ----------
 function renderSpell(){
@@ -443,7 +456,7 @@ function bindGroups(){
       else{const ab=Math.min(e.temp,amt);e.temp-=ab;e.hp=Math.max(0,e.hp-(amt-ab));}
       lockLast();save();renderGroups();return;
     }
-    if(a==='delgroup'){if(!confirm(`Delete the ${g.name} group?`))return;state.groups=state.groups.filter(x=>x!==g);lockLast();}
+    if(a==='delgroup'){if(!armed(b,'Delete?'))return;state.groups=state.groups.filter(x=>x!==g);lockLast();}
     else if(a==='dup'){const c=JSON.parse(JSON.stringify(g));c.id=uid();c.name=g.name+' (copy)';c.enemies=[];setCount(c,g.count);state.groups.splice(state.groups.indexOf(g)+1,0,c);}
     else if(a==='resethp'){g.enemies.forEach(x=>{x.hp=x.max=rollHp(g.hp);x.temp=0;});lockLast();}
     else if(a==='fullheal'){g.enemies.forEach(x=>{x.hp=x.max;});lockLast();}
@@ -809,8 +822,9 @@ function bindBackup(){
   $('#importFile').addEventListener('change',async ev=>{
     const f=ev.target.files[0];if(!f)return;
     try{const s=JSON.parse(await f.text());if(!Array.isArray(s.groups)||!s.spell)throw 0;
-      if(!confirm('Replace everything on this page with the backup?'))return;
-      state=Object.assign(defaultState(),s);save();renderAll();toast('Backup restored.');}
+      const before=JSON.stringify(state);
+      state=Object.assign(defaultState(),s);save();renderAll();
+      toast('Backup restored.','Undo',()=>{state=JSON.parse(before);save();renderAll();toast('Put back the way it was.');});}
     catch(e){toast('That file is not a Mass Save Roller backup.');}
     ev.target.value='';
   });
