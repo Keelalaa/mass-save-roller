@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.0.0';
+  const VERSION = '2.0.1';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -150,25 +150,38 @@
   }
   const sum = dice => dice.filter(d => !d.dropped).reduce((a, d) => a + d.value, 0);
 
-  const seen = new WeakSet();
-  const startedAt = Date.now();
-  const handle = msg => {
-    if (seen.has(msg) || !msg.classList.contains('you')) return;
-    const rolls = parseMessage(msg);
-    if (!rolls.length) return;               // results not drawn yet; a later look catches it
-    seen.add(msg);
-    rolls.forEach((r, i) => send({ type: 'roll', roll: Object.assign({ id: (msg.getAttribute('data-messageid') || '') + ':' + i, at: Date.now() }, r) }));
-  };
+  // Every chat message already there when the bookmark is clicked is old and never counts.
+  // New messages are re-checked until their dice show up — with 3D dice Roll20 only fills in the
+  // numbers after the dice stop tumbling, several seconds later.
   const chat = document.querySelector('#textchat') || document.body;
-  // Everything already in chat is old: mark it seen so only new rolls count.
-  chat.querySelectorAll('.message').forEach(m => seen.add(m));
-  const observer = new MutationObserver(muts => muts.forEach(mu => mu.addedNodes.forEach(n => {
-    if (n.nodeType !== 1) return;
-    const msg = n.matches('.message') ? n : n.closest('.message') || n.querySelector('.message');
-    if (!msg || msg.nextElementSibling) return;   // only the newest message
-    [60, 400, 1200].forEach(ms => setTimeout(() => handle(msg), ms));
-  })));
-  observer.observe(chat, { childList: true, subtree: true });
+  const old = new WeakSet(), done = new WeakSet(), firstSeen = new WeakMap();
+  chat.querySelectorAll('.message').forEach(m => old.add(m));
+  const looksLikeRoll = msg => msg.matches('.rollresult, .gmrollresult') || !!msg.querySelector('.inlinerollresult, .diceroll, .dicegrouping, [class*="dice"]');
+  // Shape of a message with its text removed — enough to see Roll20's layout without reading chat.
+  const outline = msg => msg.outerHTML.replace(/>[^<]+</g, '>#<').replace(/\s(style|src|href|data-[\w-]+)="[^"]*"/g, '').slice(0, 450);
+  function scan() {
+    const msgs = [...chat.querySelectorAll('.message')].slice(-15);
+    for (const msg of msgs) {
+      if (old.has(msg) || done.has(msg)) continue;
+      if (!firstSeen.has(msg)) firstSeen.set(msg, Date.now());
+      const rolls = parseMessage(msg);
+      if (rolls.length) {
+        done.add(msg);
+        if (!msg.classList.contains('you')) { logEv('roll-not-mine', 'classes: ' + msg.className); continue; }
+        rolls.forEach((r, i) => send({ type: 'roll', roll: Object.assign({ id: (msg.getAttribute('data-messageid') || '') + ':' + i, at: Date.now() }, r) }));
+        continue;
+      }
+      const age = Date.now() - firstSeen.get(msg);
+      if (age > 12000) {
+        done.add(msg);
+        if (looksLikeRoll(msg)) logEv('roll-unreadable', outline(msg));
+      }
+    }
+  }
+  let scanTimer = null;
+  new MutationObserver(() => { clearTimeout(scanTimer); scanTimer = setTimeout(scan, 80); })
+    .observe(chat, { childList: true, subtree: true, characterData: true, attributes: true });
+  setInterval(scan, 1500);
 
   // ---------- talking to the website window ----------
   window.addEventListener('message', ev => {
