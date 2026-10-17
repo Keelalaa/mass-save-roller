@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.0.6';
+  const VERSION = '2.0.7';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -84,6 +84,20 @@
     const reply = (kind, data) => send({ type: 'reply', kind, data: Object.assign({ req }, data) });
 
     if (cmd === '!msr-ping') { reply('PONG', { v: VERSION }); return; }
+
+    // Read-only: current name/HP/temp HP of the listed tokens on this map (no selection needed —
+    // nothing is changed). Lets the website catch up on edits made while it wasn't listening.
+    if (cmd === '!msr-get') {
+      const graphics = Campaign.activePage().thegraphics, tokens = [], missing = [];
+      pairs.forEach(p => {
+        const m = graphics.get(p.id);
+        if (!m) { missing.push(p.id); return; }
+        const b = readBar(m, bar), t = tbar ? readBar(m, tbar) : null;
+        tokens.push({ id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max, temp: t ? (t.cur || 0) : null });
+      });
+      reply('GET', { tokens, missing });
+      return;
+    }
 
     const sel = selectedGraphics();
     const selById = new Map(sel.map(m => [m.id, m]));

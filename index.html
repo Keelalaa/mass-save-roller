@@ -376,7 +376,7 @@ function bindSpell(){
   $('#rollBtn').addEventListener('click',()=>{
     if(Date.now()-rollBtnAt<800)return;rollBtnAt=Date.now();
     if(state.pending){state.pending=null;save();renderResults();toast('Stopped reading Roll20 rolls. Nothing was changed.');logEv('stop','stopped waiting for dice');return;}
-    doRoll();
+    freshThen(()=>doRoll());
   });
 }
 
@@ -683,7 +683,7 @@ window.addEventListener('message',ev=>{
   const fromAddon=d.source==='msr-ext'&&ev.source===window;
   if(!fromRoll20&&!fromAddon)return;
   if(d.type==='pong'){const was=ext.state+ext.roll20Open;ext.state='ok';ext.roll20Open=d.roll20Open;ext.version=d.version;
-    if(d.direct){ext.direct=true;ext.script='ok';}
+    if(d.direct){const first=!ext.direct;ext.direct=true;ext.script='ok';if(first)setTimeout(()=>refreshTokens('linked'),300);}
     renderR20();checkScript();if(was!==ext.state+ext.roll20Open)logEv('ext',`connected v${d.version}${d.direct?' (bookmark)':''}, roll20 open: ${d.roll20Open}`);}
   else if(d.type==='stale'){ext.state='stale';renderR20();logEv('ext','stale (add-on reloaded)');}
   else if(d.type==='roll'){ext.state='ok';ext.roll20Open=true;renderR20();onRoll20Roll(d.roll);}
@@ -718,10 +718,10 @@ function parsePastedD20(text){
   const src=(groups.length?groups.join(' '):s.replace(/=.*$/,'')).replace(/\d*d\d+/gi,' ');
   return (src.match(/\d+/g)||[]).map(Number).filter(n=>n>=1&&n<=20);
 }
-function usePasted(){
+async function usePasted(){
   const inp=$('#pasteDice'),dice=parsePastedD20(inp.value);
   if(!dice.length){toast('No d20 numbers (1–20) found in that.');return;}
-  if(!state.pending){doRoll(true);if(!state.pending)return;}
+  if(!state.pending){await freshThen(()=>doRoll(true));if(!state.pending)return;}
   logEv('pasted',dice.join(','));
   onRoll20Roll({id:'paste:'+uid(),dice:dice.map(v=>({sides:20,value:v})),formula:'typed in'});
   inp.value='';
@@ -884,6 +884,51 @@ const enemyLabel=e=>{const g=state.groups.find(x=>x.enemies.includes(e));return 
 const inflight=new Map();   // values this page is writing to Roll20 right now (so its echo isn't "news")
 function tempBar(){const t=state.rules.r20TBar;return /^[123]$/.test(t)&&t!==state.rules.r20Bar?t:null;}
 // Roll20 reports token edits made there (renames, HP or temp HP typed into a bar): mirror them here.
+// Catch up on edits made in Roll20 while this page wasn't listening (healing, other damage, temp
+// HP, renames): re-read every linked token. Runs when the link connects and right before each
+// mass save, so nobody has to press "Use selected Roll20 tokens" just to refresh.
+// A change of ours that hasn't reached Roll20 yet is kept on top of Roll20's new value.
+function applyRoll20Values(t){
+  let hpChanged=false,named=false;const tb=tempBar();
+  state.groups.forEach(g=>g.enemies.forEach(e=>{
+    if(e.tokenId!==t.id)return;
+    const nm=String(t.name||'').trim();
+    if(nm&&nm!==e.tname){e.tname=nm;named=true;}
+    if(t.hp!=null&&!e.needInit&&e.synced!=null&&!inflight.has(t.id+'hp')&&t.hp!==e.synced){
+      const unsent=e.synced-e.hp;e.synced=t.hp;e.hp=Math.max(0,t.hp-unsent);hpChanged=true;
+    }
+    if(t.max>0&&t.max!==e.max){e.max=t.max;named=true;}
+    if(tb&&t.temp!=null&&e.syncedTemp!=null&&!inflight.has(t.id+'temp')&&t.temp!==e.syncedTemp){
+      const unsent=e.syncedTemp-(e.temp||0);e.syncedTemp=t.temp;e.temp=Math.max(0,t.temp-unsent);hpChanged=true;
+    }
+  }));
+  return {hpChanged,named};
+}
+let refreshing=null,refreshedAt=0;
+function refreshTokens(why){
+  if(!ext.direct||!state.rules.roll20||!state.rules.r20Hp)return Promise.resolve();
+  const ids=[...new Set(tokenEnemies().map(({e})=>e.tokenId))];if(!ids.length)return Promise.resolve();
+  if(refreshing)return refreshing;
+  refreshing=(async()=>{
+    try{
+      const tb=tempBar();
+      const d=await r20Send(`!msr-get {req} bar=${state.rules.r20Bar}${tb?` tbar=${tb}`:''} `+ids.map(id=>id+':0').join(' '));
+      let hp=0,other=0;
+      (d.tokens||[]).forEach(t=>{const r=applyRoll20Values(t);if(r.hpChanged)hp++;else if(r.named)other++;});
+      if(hp)lockLast();
+      if(hp||other){save();renderGroups();renderResults();}
+      if(hp){logEv('refresh',`${why}: ${hp} token(s) had new HP in Roll20`);toast(`Updated ${hp} enem${hp===1?'y':'ies'} with HP changed in Roll20.`);}
+    }catch(err){/* the normal HP sync reports link problems */}
+    finally{refreshing=null;refreshedAt=Date.now();}
+  })();
+  return refreshing;
+}
+// Re-read first (max 2.5 s), then start — so a save always works from Roll20's real HP.
+async function freshThen(fn){
+  if(ext.direct&&tokenEnemies().length)await Promise.race([refreshTokens('before save'),new Promise(r=>setTimeout(r,2500))]);
+  fn();
+}
+window.addEventListener('focus',()=>{if(Date.now()-refreshedAt>5000)refreshTokens('window focus');});
 function onTokenChange(t){
   if(!t||!t.id)return;
   let changed=false,external=false;
@@ -895,14 +940,14 @@ function onTokenChange(t){
     const b=t.bars&&t.bars[state.rules.r20Bar];
     if(b&&b.v!=null&&!e.needInit&&e.synced!=null){
       if(inflight.get(t.id+'hp')===b.v)e.synced=b.v;
-      else if(b.v!==e.synced){e.hp=Math.max(0,b.v);e.synced=b.v;external=true;}
+      else if(b.v!==e.synced&&!inflight.has(t.id+'hp')){const unsent=e.synced-e.hp;e.synced=b.v;e.hp=Math.max(0,b.v-unsent);external=true;}
       if(b.max>0&&b.max!==e.max){e.max=b.max;changed=true;}
     }
     const tb=tbar&&t.bars&&t.bars[tbar];
     if(tb&&e.syncedTemp!=null){
       const v=tb.v==null?0:tb.v;
       if(inflight.get(t.id+'temp')===v)e.syncedTemp=v;
-      else if(v!==e.syncedTemp){e.temp=Math.max(0,v);e.syncedTemp=v;external=true;}
+      else if(v!==e.syncedTemp&&!inflight.has(t.id+'temp')){const unsent=e.syncedTemp-(e.temp||0);e.syncedTemp=v;e.temp=Math.max(0,v-unsent);external=true;}
     }
   }));
   if(external){lockLast();logEv('roll20-edit',`token changed in Roll20 (${t.name||t.id})`);}
