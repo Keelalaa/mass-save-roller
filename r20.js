@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.0.2';
+  const VERSION = '2.0.3';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -199,6 +199,10 @@
     if (win !== ev.source) win = ev.source;
     if (d.type === 'ping') { send({ type: 'pong', roll20Open: true, direct: true }); return; }
     if (d.type === 'cmd') {
+      // Each command runs once per Roll20 page, even if two copies of this link ever run at once.
+      const doneReq = window.__msrDoneReq || (window.__msrDoneReq = new Set());
+      if (doneReq.has(d.req)) return;
+      doneReq.add(d.req);
       try { runCommand(d.text); send({ type: 'cmdack', req: d.req, ok: true }); }
       catch (e) {
         send({ type: 'cmdack', req: d.req, ok: false, error: e.message === 'noselect' ? 'noselect' : 'failed' });
