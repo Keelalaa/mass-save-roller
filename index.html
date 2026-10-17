@@ -176,8 +176,9 @@ header .sp{flex:1}
       </div>
       <button id="rollBtn" class="primary big">🎲 Roll saves</button>
       <div id="targetCount" class="hint" style="text-align:center"></div>
-      <div class="row pasterow">
-        <input id="pasteDice" class="grow" placeholder="Already rolled? Paste or type the d20s, e.g. 17 5 6 1" title="Paste Roll20's result line (like: rolling 4d20 ( 17 + 5 + 6 + 1 ) = 29) or just type the numbers">
+      <div class="hint" style="margin-top:10px">Already rolled? Paste Roll20’s result or type the d20s:</div>
+      <div class="row pasterow" style="margin-top:4px">
+        <input id="pasteDice" class="grow" placeholder="e.g. 17 5 6 1" title="Paste Roll20's result line (like: rolling 4d20 ( 17 + 5 + 6 + 1 ) = 29) or just type the numbers">
         <button id="pasteBtn" class="small">Use these</button>
       </div>
     </div>
@@ -258,7 +259,7 @@ function rollDice(str){
 }
 
 // ---------- state ----------
-function newEnemy(g,n){const hp=rollHp(g.hp);return {id:uid(),n,hp,max:hp,temp:0,lrLeft:g.lr,target:true};}
+function newEnemy(g,n){const hp=rollHp(g.hp);return {id:uid(),n,hp,max:hp,temp:Math.max(0,num(g.tempEach,0)),lrLeft:g.lr,target:true};}
 function rollHp(f){const r=rollDice(f);return r.ok&&r.total>0?r.total:1;}
 function setCount(g,n){
   n=clamp(num(n,0),0,100);
@@ -358,12 +359,15 @@ function bindSpell(){
   $('#r20On').addEventListener('change',e=>{state.rules.roll20=e.target.checked;save();renderR20();if(e.target.checked)pingExt();});
   $('#r20Hp').addEventListener('change',e=>{state.rules.r20Hp=e.target.checked;save();renderR20();checkScript(true);});
   $('#r20Bar').addEventListener('change',e=>{state.rules.r20Bar=e.target.value;
+    state.groups.forEach(g=>g.enemies.forEach(x=>{if(x.tokenId&&!x.needInit)x.synced=null;}));setTimeout(()=>refreshTokens('HP bar changed'),0);
     if(state.rules.r20TBar===e.target.value){state.rules.r20TBar='';$('#r20TBar').value='';toast('HP and temp HP can’t share a bar — temp HP set to “Not used”.');}
     save();});
   $('#r20TBar').addEventListener('change',e=>{
     if(e.target.value&&e.target.value===state.rules.r20Bar){e.target.value=state.rules.r20TBar||'';toast('That’s the HP bar — pick a different bar for temp HP.');return;}
-    state.rules.r20TBar=e.target.value;save();
-    if(e.target.value)toast('Use selected Roll20 tokens again to read their temp HP.');});
+    state.rules.r20TBar=e.target.value;
+    // forget the old temp bar's values and read the new bar for every linked token right away
+    state.groups.forEach(g=>g.enemies.forEach(x=>{if(x.tokenId)x.syncedTemp=null;}));
+    save();if(e.target.value)refreshTokens('temp bar set');});
   $('#r20Dead').addEventListener('change',e=>{state.rules.r20Dead=e.target.checked;save();});
   $('#r20Status').addEventListener('click',e=>{if(e.target.dataset.setup!=null){window.postMessage({source:'msr-page',type:'setup'},location.origin);toast('Opening your game’s Mod Scripts page — click “Install it for me” in the box there.');}
     else if(e.target.dataset.recheck!=null)checkScript(true);});
@@ -422,6 +426,7 @@ function groupHTML(g){
       <div class="row pullrow"><button class="primary small" data-act="pull" title="Puts the tokens you have selected in Roll20 into this group">⬇ Use selected Roll20 tokens</button><span class="hint">Select this group's monsters in Roll20 first.</span></div>
       <div class="row">
         <label><span class="lbl">HP each</span><input data-f="hp" ${K('hp')} value="${esc(g.hp)}" style="width:110px" placeholder="7 or 2d6"></label>
+        <label><span class="lbl">Temp HP each</span><input data-f="tempEach" ${K('tempEach')} type="number" min="0" value="${num(g.tempEach,0)||''}" style="width:80px" placeholder="0" title="Temporary HP new enemies start with — Reset all HP gives everyone this"></label>
         <button class="small" data-act="resethp" title="Give every enemy in this group fresh HP">Reset all HP</button>
       </div>
       <div class="lbl">Saving throw modifiers</div>
@@ -590,7 +595,7 @@ function bindGroups(){
     if(what&&a!=='delgroup')snap(what);
     if(a==='delgroup'){if(!armed(b,'Delete?'))return;snap(what);state.groups=state.groups.filter(x=>x!==g);lockLast();}
     else if(a==='dup'){const c=JSON.parse(JSON.stringify(g));c.id=uid();c.name=g.name+' (copy)';c.enemies=[];setCount(c,g.count);state.groups.splice(state.groups.indexOf(g)+1,0,c);}
-    else if(a==='resethp'){g.enemies.forEach(x=>{x.hp=x.max=rollHp(g.hp);x.temp=0;if(x.tokenId){x.needInit=true;x.synced=null;x.blocked=false;}});lockLast();}
+    else if(a==='resethp'){g.enemies.forEach(x=>{x.hp=x.max=rollHp(g.hp);x.temp=Math.max(0,num(g.tempEach,0));if(x.tokenId){x.needInit=true;x.synced=null;x.blocked=false;}});lockLast();}
     else if(a==='fullheal'){g.enemies.forEach(x=>{x.hp=x.max;});lockLast();}
     else if(a==='resetlr'){g.enemies.forEach(x=>x.lrLeft=g.lr);lockLast();}
     else if(a==='cleardead'){g.enemies=g.enemies.filter(x=>x.hp>0);g.count=g.enemies.length;lockLast();}
@@ -953,7 +958,10 @@ function applyRoll20Values(t){
       const unsent=e.synced-e.hp;e.synced=t.hp;e.hp=Math.max(0,t.hp-unsent);hpChanged=true;
     }
     if(t.max>0&&t.max!==e.max){e.max=t.max;named=true;}
-    if(tb&&t.temp!=null&&e.syncedTemp!=null&&!inflight.has(t.id+'temp')&&t.temp!==e.syncedTemp){
+    // First read after picking a bar (or for tokens picked up before a bar was set): just take Roll20's value.
+    if(t.hp!=null&&e.synced==null&&!e.needInit){e.hp=Math.max(0,t.hp);e.synced=t.hp;named=true;}
+    if(tb&&t.temp!=null&&e.syncedTemp==null){e.temp=Math.max(0,t.temp);e.syncedTemp=t.temp;named=true;}
+    else if(tb&&t.temp!=null&&e.syncedTemp!=null&&!inflight.has(t.id+'temp')&&t.temp!==e.syncedTemp){
       const unsent=e.syncedTemp-(e.temp||0);e.syncedTemp=t.temp;e.temp=Math.max(0,t.temp-unsent);hpChanged=true;
     }
   }));
@@ -999,7 +1007,8 @@ function onTokenChange(t){
       if(b.max>0&&b.max!==e.max){e.max=b.max;changed=true;}
     }
     const tb=tbar&&t.bars&&t.bars[tbar];
-    if(tb&&e.syncedTemp!=null){
+    if(tb&&e.syncedTemp==null){const v=tb.v==null?0:tb.v;e.temp=Math.max(0,v);e.syncedTemp=v;changed=true;}   // first time this token's temp bar is seen
+    else if(tb&&e.syncedTemp!=null){
       const v=tb.v==null?0:tb.v;
       if(inflight.get(t.id+'temp')===v)e.syncedTemp=v;
       else if(v!==e.syncedTemp&&!inflight.has(t.id+'temp')){const unsent=e.syncedTemp-(e.temp||0);e.syncedTemp=v;e.temp=Math.max(0,v-unsent);external=true;}
