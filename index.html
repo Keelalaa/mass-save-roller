@@ -114,6 +114,7 @@ header .sp{flex:1}
 .wlist span{background:#1b1722;border-radius:6px;padding:3px 8px;font-size:13px}
 .wlist span.done{background:#1f4a32}
 .r20box.nohp .hpopt{display:none}
+.pullrow{display:none!important}#groups.r20 .pullrow{display:flex!important}
 .syncline{border-radius:8px;padding:6px 10px;margin:0 0 10px;font-size:13px;background:#1b1722;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .syncline.ok{background:#173323}.syncline.blocked,.syncline.fail{background:#3d1d1f;border:1px solid var(--fail)}.syncline.sending{background:#2b2617}
 </style>
@@ -183,7 +184,7 @@ header .sp{flex:1}
 
   <section>
     <div class="panel">
-      <h2>Enemies <span class="sp"></span><button id="pullTokens" class="small" hidden title="Uses the tokens you have selected in Roll20">⬇ Get selected tokens</button><button id="addGroup" class="primary small">+ Add enemy group</button></h2>
+      <h2>Enemies <span class="sp"></span><button id="addGroup" class="primary small">+ Add enemy group</button></h2>
       <div class="hint">Each group is one kind of monster (e.g. 6 Goblins). Tick the enemies caught in the spell. Click a damage type to cycle: <span class="chip resist">resistant</span> <span class="chip immune">immune</span> <span class="chip vuln">vulnerable</span>.</div>
       <div id="groups"></div>
     </div>
@@ -275,7 +276,11 @@ const closed=(()=>{let s=new Set();try{s=new Set(JSON.parse(localStorage.getItem
   return {has:k=>s.has(k),toggle:k=>{s.has(k)?s.delete(k):s.add(k);persist();}};})();
 
 const findG=id=>state.groups.find(g=>g.id===id);
-const label=(g,e)=>g.enemies.length>1?`${g.name} ${e.n}`:g.name;
+// Enemies taken from Roll20 tokens use the token's own name ("Cat 1", "Cat 2" when names repeat).
+const label=(g,e)=>{
+  if(e.tname){const same=g.enemies.filter(x=>x.tname===e.tname);return same.length>1?`${e.tname} ${same.indexOf(e)+1}`:e.tname;}
+  return g.enemies.length>1?`${g.name} ${e.n}`:g.name;
+};
 
 function toast(msg,action,fn){
   document.querySelectorAll('.toast').forEach(x=>x.remove());
@@ -306,7 +311,7 @@ function renderR20(){
   const on=state.rules.roll20;
   $('.r20box').classList.toggle('off',!on);
   $('.r20box').classList.toggle('nohp',!state.rules.r20Hp);
-  $('#pullTokens').hidden=!(on&&state.rules.r20Hp);
+  $('#groups').classList.toggle('r20',on&&state.rules.r20Hp);
   $('#rollBtn').textContent=on?'🎲 Start — then roll in Roll20':'🎲 Roll saves';
   const st=$('#r20Status');
   if(!on){st.innerHTML='';return;}
@@ -335,7 +340,6 @@ function bindSpell(){
   $('#r20Hp').addEventListener('change',e=>{state.rules.r20Hp=e.target.checked;save();renderR20();checkScript(true);});
   $('#r20Bar').addEventListener('change',e=>{state.rules.r20Bar=e.target.value;save();});
   $('#r20Dead').addEventListener('change',e=>{state.rules.r20Dead=e.target.checked;save();});
-  $('#pullTokens').addEventListener('click',pullTokens);
   $('#r20Status').addEventListener('click',e=>{if(e.target.dataset.setup!=null){window.postMessage({source:'msr-page',type:'setup'},location.origin);toast('Opening your game’s Mod Scripts page — click “Install it for me” in the box there.');}
     else if(e.target.dataset.recheck!=null)checkScript(true);});
   $('#syncLine').addEventListener('click',e=>{if(e.target.dataset.sync==='retry')runSync(true);});
@@ -382,6 +386,7 @@ function groupHTML(g){
       <button class="icon danger" data-act="delgroup" title="Delete group">✕</button>
     </div>
     <div class="gbody">
+      <div class="row pullrow"><button class="primary small" data-act="pull" title="Puts the tokens you have selected in Roll20 into this group">⬇ Use selected Roll20 tokens</button><span class="hint">Select this group's monsters in Roll20 first.</span></div>
       <div class="row">
         <label><span class="lbl">HP each</span><input data-f="hp" ${K('hp')} value="${esc(g.hp)}" style="width:110px" placeholder="7 or 2d6"></label>
         <button class="small" data-act="resethp" title="Give every enemy in this group fresh HP">Reset all HP</button>
@@ -450,6 +455,7 @@ function bindGroups(){
     const {g,e}=ctx(b);if(!g)return;
     const a=b.dataset.act;
     if(a==='toggle'){closed.toggle(g.id);b.closest('.group').classList.toggle('closed');return;}
+    if(a==='pull'){pullTokens(g.id);return;}
     if(a==='chip'){const d=b.dataset.type,cyc={undefined:'resist',resist:'immune',immune:'vuln',vuln:undefined};const n=cyc[g.dmg[d]];if(n)g.dmg[d]=n;else delete g.dmg[d];save();recompute();return;}
     if(a==='hurt'||a==='heal'){
       const amt=Math.max(0,num(b.closest('.enemy').querySelector('[data-e=amt]').value));if(!amt)return;
@@ -577,9 +583,21 @@ window.addEventListener('message',ev=>{
 });
 window.addEventListener('focus',()=>{if(state.rules.roll20){if(ext.state!=='stale')ext.state=ext.state==='ok'?'ok':'checking';pingExt();}});
 const pendingDone=P=>P.recs.every(r=>r.d20.length>=r.need)&&(!P.dmg||P.dmg.every(p=>p.total!=null));
+const seenRolls=new Map();
 function onRoll20Roll(roll){
+  if(!roll||!Array.isArray(roll.dice))return;
+  // Same roll reported twice (e.g. an older copy of the link still running in Roll20) → use once.
+  const key=String(roll.id||'').length>3?roll.id:roll.formula+'|'+roll.dice.map(d=>d.value).join(',');
+  const now=Date.now();seenRolls.forEach((t,k)=>{if(now-t>60000)seenRolls.delete(k);});
+  if(seenRolls.has(key))return;
+  seenRolls.set(key,now);
   const P=state.pending;
-  if(!P||!roll||!Array.isArray(roll.dice))return;
+  if(!P){
+    // Rolled before pressing Start: offer to use these dice instead of silently ignoring them.
+    if(roll.dice.some(d=>d.sides===20)&&state.rules.roll20)
+      toast(`Got your Roll20 dice (${roll.formula||'d20s'}), but no mass save was waiting.`,'Use them now',()=>{doRoll();if(state.pending)onRoll20Roll(Object.assign({},roll,{id:roll.id+':again'}));});
+    return;
+  }
   // Only the individual dice matter — Roll20's added-up total is ignored for saves.
   const d20s=roll.dice.filter(d=>d.sides===20).map(d=>d.value);
   logEv('roll20-dice',`${roll.formula}: ${roll.dice.map(d=>'d'+d.sides+'='+d.value+(d.dropped?'(dropped)':'')).join(' ')}`);
@@ -627,50 +645,38 @@ function checkScript(force){
   scriptCheckAt=Date.now();ext.script='checking';renderR20();
   r20Send('!msr-ping {req}').then(()=>{ext.script='ok';renderR20();},err=>{r20Problem(err);if(ext.script==='checking')ext.script='unknown';renderR20();});
 }
-async function pullTokens(){
+async function pullTokens(gid){
   try{
     const d=await r20Send(`!msr-sel {req} bar=${state.rules.r20Bar}`);
     ext.script='ok';renderR20();
     logEv('tokens',`selected ${(d.tokens||[]).length}: ${(d.tokens||[]).map(t=>t.name+'='+t.hp+'/'+t.max).join(', ')}`);
-    if(!d.tokens||!d.tokens.length){toast('Select the monster tokens in Roll20 first, then click this again.');return;}
-    mergeTokens(d.tokens);
+    if(!d.tokens||!d.tokens.length){toast('Select this group’s monster tokens in Roll20 first, then click this again.');return;}
+    const g=findG(gid);if(!g)return;
+    mergeTokens(d.tokens,g);
   }catch(err){toast(r20Problem(err));}
 }
-// Selected tokens become the targets. Tokens are grouped by name ("Goblin 3" → Goblin), so save
-// modifiers typed in for a group are kept. Only these exact tokens can be changed later.
-function mergeTokens(tokens){
+// The selected Roll20 tokens become this group's enemies (the group keeps the name and save
+// modifiers the GM typed). Each enemy shows its token's own name and HP. A token can only be in
+// one group, so it's taken out of any other group first. Only these exact tokens can change later.
+function mergeTokens(tokens,g){
   lockLast();
-  state.groups.forEach(g=>g.enemies.forEach(e=>e.target=false));
-  const byBase=new Map();
-  tokens.forEach(t=>{
-    const m=/^(.*?)[\s#-]*(\d+)$/.exec(t.name.trim());
-    const base=(m&&m[1].trim())||t.name.trim()||'Token';
-    if(!byBase.has(base))byBase.set(base,[]);
-    byBase.get(base).push({t,n:m?+m[2]:null});
-  });
   const selIds=new Set(tokens.map(t=>t.id)),old=new Map();
-  state.groups.forEach(g=>{g.enemies.forEach(e=>{if(selIds.has(e.tokenId))old.set(e.tokenId,e);});g.enemies=g.enemies.filter(e=>!selIds.has(e.tokenId));});
-  const lost=[...old.values()].filter(e=>e.synced!=null&&e.hp!==e.synced).length;
-  let noHp=0,made=[];
-  byBase.forEach((list,base)=>{
-    let g=state.groups.find(x=>x.name.trim().toLowerCase()===base.toLowerCase());
-    if(!g){g=newGroup({name:base,hp:String(list[0].t.max||list[0].t.hp||10)});g.enemies=[];state.groups.push(g);made.push(base);}
-    // keep this group's other Roll20 tokens (not selected now); drop hand-made entries
-    g.enemies=g.enemies.filter(e=>e.tokenId);
-    list.forEach(({t,n})=>{
-      const prev=old.get(t.id),used=new Set(g.enemies.map(e=>e.n));
-      let num=n&&!used.has(n)?n:1;while(used.has(num))num++;
-      // Image tokens often have an empty HP bar: they get "HP each" and Roll20's bar is filled in.
-      const hasHp=t.hp!=null;if(!hasHp)noHp++;
-      const hp=hasHp?Math.max(0,t.hp):rollHp(g.hp);
-      g.enemies.push({id:prev?prev.id:uid(),n:num,hp,max:Math.max(t.max||0,hp),temp:prev?prev.temp:0,lrLeft:prev?prev.lrLeft:g.lr,
-        target:true,tokenId:t.id,synced:hasHp?hp:null,needInit:!hasHp,noBar:false,blocked:false});
-    });
-    g.enemies.sort((a,b)=>a.n-b.n);g.count=g.enemies.length;
+  g.enemies.forEach(e=>{if(e.tokenId)old.set(e.tokenId,e);});
+  state.groups.forEach(x=>{x.enemies.forEach(e=>{if(selIds.has(e.tokenId))old.set(e.tokenId,e);});if(x!==g){x.enemies=x.enemies.filter(e=>!selIds.has(e.tokenId));x.count=x.enemies.length;}});
+  const lost=[...old.values()].filter(e=>selIds.has(e.tokenId)&&e.synced!=null&&e.hp!==e.synced).length;
+  let noHp=0;
+  g.enemies=tokens.map((t,i)=>{
+    const prev=old.get(t.id);
+    // Image tokens often have an empty HP bar: they get "HP each" and Roll20's bar is filled in.
+    const hasHp=t.hp!=null;if(!hasHp)noHp++;
+    const hp=hasHp?Math.max(0,t.hp):rollHp(g.hp);
+    return {id:prev?prev.id:uid(),n:i+1,tname:String(t.name||'').trim(),hp,max:Math.max(t.max||0,hp),temp:prev?prev.temp:0,lrLeft:prev?prev.lrLeft:g.lr,
+      target:true,tokenId:t.id,synced:hasHp?hp:null,needInit:!hasHp,noBar:false,blocked:false};
   });
-  state.groups=state.groups.filter(g=>g.enemies.length);
+  g.count=g.enemies.length;
+  state.groups=state.groups.filter(x=>x===g||x.enemies.length);
   save();renderGroups();renderResults();
-  toast(`Got ${tokens.length} token${tokens.length===1?'':'s'} from Roll20.`+(made.length?` New group${made.length>1?'s':''}: ${made.join(', ')} — type in the save modifiers.`:'')+(noHp?` ${noHp} had no HP on bar ${state.rules.r20Bar} — gave them “HP each”. To change it, edit HP each and press Reset all HP.`:'')+(lost?` ${lost} had HP changes that never reached Roll20 — now showing Roll20’s HP instead.`:''));
+  toast(`Put ${tokens.length} token${tokens.length===1?'':'s'} into ${g.name}.`+(noHp?` ${noHp} had no HP on bar ${state.rules.r20Bar} — gave them “HP each”. To change it, edit HP each and press Reset all HP.`:'')+(lost?` ${lost} had HP changes that never reached Roll20 — now showing Roll20’s HP instead.`:''));
 }
 // Any time a Roll20-linked enemy's HP on this page differs from what Roll20 last confirmed, the
 // difference is sent. The Mod script refuses tokens that aren't selected in Roll20 at that moment.

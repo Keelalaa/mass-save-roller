@@ -3,12 +3,18 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.0.1';
+  const VERSION = '2.0.2';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
-  // Clicking the bookmark again: just re-open / re-link the website window.
-  if (window.__msrLink) { window.__msrLink.relink(window.__msrWin); return; }
+  // Clicking the bookmark again: same version → just re-open / re-link the website window;
+  // newer version → shut the old copy down and start this one (no Roll20 reload needed).
+  if (window.__msrLink) {
+    if (window.__msrLink.version === VERSION) { window.__msrLink.relink(window.__msrWin); return; }
+    try { if (window.__msrLink.stop) window.__msrLink.stop(); } catch (e) {}
+    window.__msrLink = null;
+  }
+  const cleanups = [];
 
   let win = window.__msrWin || null;
   const send = data => { try { if (win && !win.closed) win.postMessage(Object.assign({ source: 'msr-ext', version: VERSION }, data), SITE); } catch (e) {} };
@@ -179,12 +185,15 @@
     }
   }
   let scanTimer = null;
-  new MutationObserver(() => { clearTimeout(scanTimer); scanTimer = setTimeout(scan, 80); })
-    .observe(chat, { childList: true, subtree: true, characterData: true, attributes: true });
-  setInterval(scan, 1500);
+  const observer = new MutationObserver(() => { clearTimeout(scanTimer); scanTimer = setTimeout(scan, 80); });
+  observer.observe(chat, { childList: true, subtree: true, characterData: true, attributes: true });
+  const scanEvery = setInterval(scan, 1500);
+  cleanups.push(() => { observer.disconnect(); clearInterval(scanEvery); clearTimeout(scanTimer); });
 
   // ---------- talking to the website window ----------
-  window.addEventListener('message', ev => {
+  window.addEventListener('message', onMessage);
+  cleanups.push(() => window.removeEventListener('message', onMessage));
+  function onMessage(ev) {
     const d = ev.data;
     if (ev.origin !== SITE || !d || d.source !== 'msr-page') return;
     if (win !== ev.source) win = ev.source;
@@ -196,7 +205,7 @@
         logEv('cmd-error', d.text.split(' ')[0] + ': ' + (e && e.message));
       }
     }
-  });
+  }
 
   // ---------- small status badge in Roll20 ----------
   const badge = document.createElement('div');
@@ -205,7 +214,8 @@
   badge.onclick = () => relink(null);
   document.body.appendChild(badge);
   const setBadge = () => { badge.textContent = win && !win.closed ? '⚔️ Mass Save linked' : '⚔️ Mass Save — click to open'; };
-  setInterval(setBadge, 2000);
+  const badgeEvery = setInterval(setBadge, 2000);
+  cleanups.push(() => { clearInterval(badgeEvery); badge.remove(); });
 
   function relink(w) {
     if (w && !w.closed) win = w;
@@ -214,7 +224,7 @@
     setBadge();
     send({ type: 'pong', roll20Open: true, direct: true });
   }
-  window.__msrLink = { relink, version: VERSION };
+  window.__msrLink = { relink, version: VERSION, stop: () => cleanups.forEach(f => { try { f(); } catch (e) {} }) };
   relink(win);
   logEv('linked', 'roll20 page ' + ((Campaign.activePage && Campaign.activePage().get('name')) ? 'ok' : '?') + ', popup ' + (win ? 'open' : 'BLOCKED'));
   console.log(TAG, 'ready', VERSION);
