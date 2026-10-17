@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.0.3';
+  const VERSION = '2.0.4';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -17,7 +17,7 @@
   const cleanups = [];
 
   let win = window.__msrWin || null;
-  const send = data => { try { if (win && !win.closed) win.postMessage(Object.assign({ source: 'msr-ext', version: VERSION }, data), SITE); } catch (e) {} };
+  const send = data => { try { if (win && !win.closed) win.postMessage(Object.assign({ source: 'msr-ext2', version: VERSION }, data), SITE); } catch (e) {} };
   const logEv = (ev, msg) => {
     try {
       fetch(SITE + '/api/log', { method: 'POST', headers: { 'Content-Type': 'text/plain' },
@@ -195,7 +195,7 @@
   cleanups.push(() => window.removeEventListener('message', onMessage));
   function onMessage(ev) {
     const d = ev.data;
-    if (ev.origin !== SITE || !d || d.source !== 'msr-page') return;
+    if (ev.origin !== SITE || !d || d.source !== 'msr-page2') return;
     if (win !== ev.source) win = ev.source;
     if (d.type === 'ping') { send({ type: 'pong', roll20Open: true, direct: true }); return; }
     if (d.type === 'cmd') {
