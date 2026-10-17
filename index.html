@@ -31,7 +31,7 @@ header .sp{flex:1}
 .layout{display:grid;grid-template-columns:minmax(0,440px) minmax(0,1fr);gap:16px;padding:16px;max-width:1400px;margin:0 auto}
 .layout>section{min-width:0}
 @media (max-width:900px){.layout{grid-template-columns:minmax(0,1fr);padding:10px 16px}}
-@media (max-width:520px){.res{font-size:13px}.res td,.res th{padding:5px 2px}.saves{grid-template-columns:repeat(3,1fr)}.enemy{grid-template-columns:auto minmax(0,1fr)}.enemy .ectl{grid-column:1/-1;justify-content:flex-start}.enemy .ectl input[type=number]{width:46px!important}}
+@media (max-width:520px){.res{font-size:13px}.res td,.res th{padding:5px 2px}.saves{grid-template-columns:repeat(3,1fr)}.enemy{grid-template-columns:auto auto minmax(0,1fr)}.enemy .ectl{grid-column:1/-1;justify-content:flex-start}.enemy .ectl input[type=number]{width:46px!important}}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:16px}
 .panel h2{margin:0 0 10px;font-size:17px;color:var(--gold2);display:flex;align-items:center;gap:8px}
 .panel h2 .sp{flex:1}
@@ -52,6 +52,12 @@ header .sp{flex:1}
 .group.dragging{opacity:.6}
 .ghead{display:flex;gap:8px;align-items:center;padding:8px 10px;flex-wrap:wrap}
 .handle{cursor:grab;touch-action:none;user-select:none;color:var(--muted);font-size:20px;padding:0 4px}
+.ehandle{cursor:grab;touch-action:none;user-select:none;color:var(--muted);font-size:17px;padding:0 2px}
+.enemy.dragging{opacity:.4}
+.group.droptarget{outline:2px dashed var(--gold);outline-offset:2px}
+.newcard-zone{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:98;width:min(420px,calc(100vw - 32px));border:2px dashed var(--gold);border-radius:12px;padding:20px;text-align:center;color:var(--gold2);background:#211c27ee;font-weight:700;box-shadow:0 6px 24px #000a}
+.newcard-zone.hot{border-color:var(--gold);color:var(--gold2);background:#2a2417}
+.dragghost{position:fixed;pointer-events:none;z-index:99;background:var(--panel2);border:1px solid var(--gold);color:var(--gold2);font-weight:700;padding:4px 10px;border-radius:6px;box-shadow:0 4px 14px #0008}
 .collapse{background:none;border:0;padding:2px 6px;font-size:16px;transition:transform .15s}
 .group.closed .collapse{transform:rotate(-90deg)}
 .gname{font-weight:700;flex:1;min-width:120px;font-size:16px}
@@ -69,7 +75,7 @@ header .sp{flex:1}
 .chip.immune{background:#3a3a3a;color:#fff;border-color:#888;text-decoration:line-through}
 .chip.vuln{background:#6b2b2b;color:#ffd6d6;border-color:#b04a4a}
 .enemies{display:flex;flex-direction:column;gap:6px;margin-top:8px}
-.enemy{display:grid;grid-template-columns:auto minmax(80px,1fr) auto;gap:8px;align-items:center;background:#1b1722;border-radius:8px;padding:6px 8px}
+.enemy{display:grid;grid-template-columns:auto auto minmax(80px,1fr) auto;gap:8px;align-items:center;background:#1b1722;border-radius:8px;padding:6px 8px}
 .enemy.dead{opacity:.55}
 .enemy .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bar{height:6px;background:#3a3040;border-radius:4px;overflow:hidden;margin-top:4px}
@@ -250,14 +256,14 @@ function rollDice(str){
 function newEnemy(g,n){const hp=rollHp(g.hp);return {id:uid(),n,hp,max:hp,temp:0,lrLeft:g.lr,target:true};}
 function rollHp(f){const r=rollDice(f);return r.ok&&r.total>0?r.total:1;}
 function setCount(g,n){
-  n=clamp(num(n,1),1,100);
+  n=clamp(num(n,0),0,100);
   while(g.enemies.length<n){const next=g.enemies.reduce((m,e)=>Math.max(m,e.n),0)+1;g.enemies.push(newEnemy(g,next));}
   g.enemies.length=n;g.count=n;
 }
 function newGroup(o={}){
   const g={id:uid(),name:o.name||'New enemy',hp:o.hp||'10',saves:Object.assign({str:0,dex:0,con:0,int:0,wis:0,cha:0},o.saves||{}),
     adv:'normal',magicRes:!!o.magicRes,autoFail:false,evasion:false,cover:0,bonus:'',lr:o.lr||0,dmg:Object.assign({},o.dmg||{}),enemies:[],count:0};
-  setCount(g,o.count||1);return g;
+  setCount(g,o.count??0);return g;
 }
 function defaultState(){
   return {
@@ -377,6 +383,7 @@ function groupHTML(g){
     const pct=e.max>0?clamp(e.hp/e.max*100,0,100):0, cls=pct<=25?'low':pct<=50?'mid':'';
     const lr=g.lr>0?`<span class="lr" title="Legendary Resistance left">${'◆'.repeat(e.lrLeft)}${'◇'.repeat(Math.max(0,g.lr-e.lrLeft))}</span>`:'';
     return `<div class="enemy${e.hp<=0?' dead':''}" data-eid="${e.id}">
+      <span class="ehandle" title="Drag onto another card — or below the cards for its own card">⠿</span>
       <input type="checkbox" data-e="target" ${K(e.id+'t')} ${e.target?'checked':''} title="Caught in the spell">
       <div><div class="nm">${e.hp<=0?'💀 ':''}${e.tokenId?`<span title="${e.noBar?'Roll20 token (no HP on its bar — not updated)':'Linked to a Roll20 token'}">${e.noBar?'⛓️‍💥':'🔗'}</span> `:''}${esc(label(g,e))} ${lr}</div><div class="bar ${cls}"><i style="width:${pct}%"></i></div></div>
       <div class="ectl">
@@ -392,7 +399,7 @@ function groupHTML(g){
       <span class="handle" title="Drag to reorder">⠿</span>
       <button class="collapse" data-act="toggle" title="Show/hide">▾</button>
       <input class="gname" data-f="name" ${K('name')} value="${esc(g.name)}">
-      <label class="alive">× <input type="number" data-f="count" ${K('count')} min="1" max="100" value="${g.count}" title="How many"></label>
+      <label class="alive">× <input type="number" data-f="count" ${K('count')} min="0" max="100" value="${g.count}" title="How many"></label>
       <span class="alive">${up}/${g.enemies.length} standing</span>
       ${state.groups.length>1?`<select class="mergesel" data-merge title="Move all of this card’s enemies into another card"><option value="">Merge into…</option>${state.groups.filter(x=>x!==g).map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>`:''}
       <button class="icon" data-act="dup" title="Duplicate group">⧉</button>
@@ -418,7 +425,7 @@ function groupHTML(g){
       <div class="lbl">Damage resistances</div>
       <div class="chips">${chips}</div>
       <div class="lbl">Enemies <span style="text-transform:none">(HP / max HP · temp HP · type an amount, then − or +)</span></div>
-      <div class="enemies">${enemies}</div>
+      <div class="enemies">${enemies||'<div class="hint">No enemies yet — set how many with × at the top of this card, use selected Roll20 tokens, or drag enemies here.</div>'}</div>
       <div class="gactions">
         <button class="small" data-act="all">Target all</button>
         <button class="small" data-act="none">Target none</button>
@@ -444,6 +451,12 @@ function splitEnemy(g,e){
   moveEnemy(e,g,c);e.n=1;
   save();recompute();
   toast(`${name} has its own card now — change its modifiers there.`);
+}
+function moveToGroup(g,e,to){
+  const name=label(g,e);if(!e.tname)e.tname=name;
+  e.n=to.enemies.reduce((m,x)=>Math.max(m,x.n),0)+1;
+  moveEnemy(e,g,to);save();recompute();
+  toast(`Moved ${name} to ${to.name} — it uses ${to.name}’s modifiers now.`);
 }
 function mergeGroup(g,to){
   g.enemies.slice().forEach(e=>{
@@ -510,11 +523,41 @@ function bindGroups(){
     else if(a==='resethp'){g.enemies.forEach(x=>{x.hp=x.max=rollHp(g.hp);x.temp=0;if(x.tokenId){x.needInit=true;x.synced=null;x.blocked=false;}});lockLast();}
     else if(a==='fullheal'){g.enemies.forEach(x=>{x.hp=x.max;});lockLast();}
     else if(a==='resetlr'){g.enemies.forEach(x=>x.lrLeft=g.lr);lockLast();}
-    else if(a==='cleardead'){const keep=g.enemies.filter(x=>x.hp>0);if(!keep.length){toast('Everyone in this group is down — delete the group instead.');return;}g.enemies=keep;g.count=keep.length;lockLast();}
+    else if(a==='cleardead'){g.enemies=g.enemies.filter(x=>x.hp>0);g.count=g.enemies.length;lockLast();}
     else if(a==='all')g.enemies.forEach(x=>x.target=x.hp>0);
     else if(a==='none')g.enemies.forEach(x=>x.target=false);
     save();renderGroups();
   });
+  // drag an enemy onto another card, or onto the "own card" area below the cards
+  let edrag=null;
+  box.addEventListener('pointerdown',ev=>{
+    const h=ev.target.closest('.ehandle');if(!h)return;
+    ev.preventDefault();ev.stopPropagation();
+    const row=h.closest('.enemy'),card=h.closest('.group'),g=findG(card.dataset.gid),e=g&&g.enemies.find(x=>x.id===row.dataset.eid);if(!e)return;
+    const zone=document.createElement('div');zone.className='newcard-zone';zone.textContent='⇱ Drop here to give it its own card';document.body.appendChild(zone);
+    const ghost=document.createElement('div');ghost.className='dragghost';ghost.textContent=label(g,e);document.body.appendChild(ghost);
+    ghost.style.left=(ev.clientX+12)+'px';ghost.style.top=(ev.clientY+8)+'px';
+    edrag={g,e,row,zone,ghost,target:null};row.classList.add('dragging');
+    try{h.setPointerCapture(ev.pointerId);}catch(x){}
+  });
+  box.addEventListener('pointermove',ev=>{
+    if(!edrag)return;
+    edrag.ghost.style.left=(ev.clientX+12)+'px';edrag.ghost.style.top=(ev.clientY+8)+'px';
+    const el=document.elementFromPoint(ev.clientX,ev.clientY);
+    box.querySelectorAll('.group.droptarget').forEach(x=>x.classList.remove('droptarget'));edrag.zone.classList.remove('hot');
+    const card=el&&el.closest&&el.closest('.group');
+    if(el&&el.closest&&el.closest('.newcard-zone')){edrag.target='new';edrag.zone.classList.add('hot');}
+    else if(card&&card.dataset.gid!==edrag.g.id){edrag.target=card.dataset.gid;card.classList.add('droptarget');}
+    else edrag.target=null;
+  });
+  const eend=()=>{
+    if(!edrag)return;
+    const {g,e,row,zone,ghost,target}=edrag;edrag=null;
+    zone.remove();ghost.remove();row.classList.remove('dragging');box.querySelectorAll('.group.droptarget').forEach(x=>x.classList.remove('droptarget'));
+    if(target==='new'){if(g.enemies.length<2)toast('That enemy already has its own card.');else splitEnemy(g,e);}
+    else if(target){const to=findG(target);if(to)moveToGroup(g,e,to);}
+  };
+  box.addEventListener('pointerup',eend);box.addEventListener('pointercancel',eend);
   // drag reorder
   let drag=null;
   box.addEventListener('pointerdown',ev=>{
@@ -719,7 +762,6 @@ function mergeTokens(tokens,g){
       target:true,tokenId:t.id,synced:hasHp?hp:null,needInit:!hasHp,noBar:false,blocked:false};
   });
   g.count=g.enemies.length;
-  state.groups=state.groups.filter(x=>x===g||x.enemies.length);
   save();renderGroups();renderResults();
   toast(`Put ${tokens.length} token${tokens.length===1?'':'s'} into ${g.name}.`+(noHp?` ${noHp} had no HP on bar ${state.rules.r20Bar} — gave them “HP each”. To change it, edit HP each and press Reset all HP.`:'')+(lost?` ${lost} had HP changes that never reached Roll20 — now showing Roll20’s HP instead.`:''));
 }
