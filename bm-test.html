@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bookmark Test</title>
+<style>
+body{margin:0;background:#15121a;color:#ece6f2;font:17px/1.5 system-ui,sans-serif}
+main{max-width:560px;margin:0 auto;padding:32px 16px}
+h1{color:#f0cf86;font-size:24px}
+.bm{display:inline-block;background:linear-gradient(#e2bb63,#b98d34);color:#1b1408;font-weight:800;padding:12px 18px;border-radius:10px;text-decoration:none;cursor:grab;margin:10px 0}
+ol li{margin:8px 0}
+.muted{color:#a69cb3;font-size:14px}
+</style>
+</head>
+<body>
+<main>
+  <h1>🔖 Bookmark test (10 seconds)</h1>
+  <ol>
+    <li>Press <b>Ctrl + Shift + B</b> if you can't see your bookmarks bar.</li>
+    <li>Drag this gold button up onto your bookmarks bar:<br>
+      <a class="bm" href="javascript:(async()=>{try{const t=await (await fetch('https://mass-save-roller.vercel.app/bm-test.js?'+Date.now())).text();(0,eval)(t)}catch(e){console.error('Mass Save bookmark blocked',e)}})()" onclick="event.preventDefault();this.textContent='Drag me up to the bookmarks bar ↑'">⚔️ Mass Save</a></li>
+    <li>Go to your Roll20 game tab and click the new <b>⚔️ Mass Save</b> bookmark.</li>
+  </ol>
+  <p>If a gold box saying <b>“Mass Save bookmark works in Roll20!”</b> pops up at the top of Roll20, it works. If nothing happens, it's blocked.</p>
+  <p class="muted">This test changes nothing in your game.</p>
+</main>
+</body>
+</html>
