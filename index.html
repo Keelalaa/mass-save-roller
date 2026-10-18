@@ -184,13 +184,13 @@ header .sp{flex:1}
     </div>
 
     <div class="panel">
-      <h2>Results <span class="sp"></span><button id="undoBtn" class="small" hidden>↩ Undo roll</button><button id="redoBtn" class="small" hidden>↪ Redo roll</button></h2>
+      <h2>Results <span class="sp"></span><button id="undoBtn" class="small" hidden>↩ Undo roll</button><button id="redoBtn" class="small" hidden>↪ Redo roll</button><button id="clearResults" class="small" hidden title="Hide this result. Nobody's HP changes; the roll stays in History.">✕ Clear</button></h2>
       <div id="syncLine" hidden></div>
       <div id="results"></div>
     </div>
 
     <div class="panel">
-      <h2>History</h2>
+      <h2>History <span class="sp"></span><button id="clearHistory" class="small" hidden>Clear history</button></h2>
       <ol id="history" class="history"></ol>
       <div class="row" style="margin-top:12px"><label><input type="checkbox" id="natRule"> House rule: natural 20 always passes, natural 1 always fails</label></div>
     </div>
@@ -1092,6 +1092,8 @@ function renderResults(){
   renderRollBtn();
   $('#undoBtn').hidden=!L||!!P;
   $('#redoBtn').hidden=!state.redo||!!L||!!P;
+  $('#clearResults').hidden=!L||!!P;
+  $('#clearHistory').hidden=!state.log.some(x=>x.text);
   $('#history').innerHTML=state.log.filter(x=>x.text).map(x=>`<li>${esc(x.text)}</li>`).join('')||'<span class="muted">Nothing rolled yet.</span>';
   if(P){
     const need=P.recs.reduce((a,r)=>a+r.need,0),got=P.recs.reduce((a,r)=>a+r.d20.length,0);
@@ -1154,6 +1156,9 @@ function bindResults(){
   });
   $('#undoBtn').addEventListener('click',undo);
   $('#redoBtn').addEventListener('click',redo);
+  // Clearing only hides the result — HP stays as it is (the roll can't be undone afterwards).
+  $('#clearResults').addEventListener('click',()=>{state.last=null;state.redo=null;save();renderResults();toast('Results cleared. Nobody’s HP was changed.');});
+  $('#clearHistory').addEventListener('click',ev=>{if(!armed(ev.currentTarget,'Clear all?'))return;state.log=state.log.filter(x=>state.last&&x.id===state.last.id);save();renderResults();toast('History cleared.');});
   $('#pasteBtn').addEventListener('click',usePasted);
   $('#pasteDice').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();usePasted();}});
 }
