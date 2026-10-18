@@ -520,17 +520,25 @@ function restoreGroups(json){
   }));
   state.groups=gs;
 }
+// Clearing the results / history is undoable too (those entries hold the results, not the cards).
+const resultsCopy=()=>JSON.stringify({last:state.last,redo:state.redo||null,log:state.log});
+function snapResults(what){
+  undoStack.push({what,results:resultsCopy()});
+  if(undoStack.length>40)undoStack.shift();
+  redoStack.length=0;renderUndo();
+}
+function swapIn(s,other){
+  if(s.results){other.push({what:s.what,results:resultsCopy()});const r=JSON.parse(s.results);state.last=r.last;state.redo=r.redo;state.log=r.log;save();renderResults();}
+  else{other.push({what:s.what,groups:JSON.stringify(state.groups)});restoreGroups(s.groups);lockLast();save();renderGroups();renderResults();}
+  renderUndo();
+}
 function undoEdit(){
   const s=undoStack.pop();if(!s)return;
-  redoStack.push({what:s.what,groups:JSON.stringify(state.groups)});
-  restoreGroups(s.groups);lockLast();save();renderGroups();renderResults();renderUndo();
-  toast(`Undid: ${s.what}`);logEv('undo-edit',s.what);
+  swapIn(s,redoStack);toast(`Undid: ${s.what}`);logEv('undo-edit',s.what);
 }
 function redoEdit(){
   const s=redoStack.pop();if(!s)return;
-  undoStack.push({what:s.what,groups:JSON.stringify(state.groups)});
-  restoreGroups(s.groups);lockLast();save();renderGroups();renderResults();renderUndo();
-  toast(`Redid: ${s.what}`);
+  swapIn(s,undoStack);toast(`Redid: ${s.what}`);
 }
 function renderUndo(){
   const u=$('#undoEdit'),r=$('#redoEdit');if(!u)return;
@@ -1157,8 +1165,8 @@ function bindResults(){
   $('#undoBtn').addEventListener('click',undo);
   $('#redoBtn').addEventListener('click',redo);
   // Clearing only hides the result — HP stays as it is (the roll can't be undone afterwards).
-  $('#clearResults').addEventListener('click',()=>{state.last=null;state.redo=null;save();renderResults();toast('Results cleared. Nobody’s HP was changed.');});
-  $('#clearHistory').addEventListener('click',ev=>{if(!armed(ev.currentTarget,'Clear all?'))return;state.log=state.log.filter(x=>state.last&&x.id===state.last.id);save();renderResults();toast('History cleared.');});
+  $('#clearResults').addEventListener('click',()=>{snapResults('clear results');state.last=null;state.redo=null;save();renderResults();toast('Results cleared. Nobody’s HP was changed.','Undo',undoEdit);});
+  $('#clearHistory').addEventListener('click',ev=>{if(!armed(ev.currentTarget,'Clear all?'))return;snapResults('clear history');state.log=[];save();renderResults();toast('History cleared.','Undo',undoEdit);});
   $('#pasteBtn').addEventListener('click',usePasted);
   $('#pasteDice').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();usePasted();}});
 }
