@@ -119,6 +119,14 @@ header .sp{flex:1}
 .wlist{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 .wlist span{background:#1b1722;border-radius:6px;padding:3px 8px;font-size:13px}
 .wlist span.done{background:#1f4a32}
+#condBox{margin:6px 0 4px 24px}
+#condIcons{display:flex;flex-wrap:wrap;gap:4px;max-height:176px;overflow-y:auto;margin:6px 0;padding:2px}
+#condIcons button{width:34px;height:34px;padding:3px;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:9px;line-height:1}
+#condIcons button.on{outline:2px solid var(--gold2);background:#3a2f18}
+.micon{width:24px;height:24px;display:block;object-fit:contain}
+.mdot{display:block;width:20px;height:20px;border-radius:50%}
+.nm .micon,.nm .mdot{display:inline-block;width:15px;height:15px;vertical-align:-3px;margin-left:3px}
+.tag .micon,.tag .mdot{display:inline-block;width:14px;height:14px;vertical-align:-3px;margin-right:3px}
 button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 #initBonus{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
 #initBonus:empty{display:none}
@@ -164,6 +172,12 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
       <div class="row"><button id="addPart" class="small">+ Add another damage type</button></div>
       <div class="hint">Type the damage you rolled, like <b>16</b>. Leave it empty if the effect does no damage. The type is optional — only pick one if some enemies resist or are immune to it.</div>
       <div class="row"><label><input type="checkbox" id="spIsSpell"> It's a spell (Magic Resistance applies)</label></div>
+      <div class="row"><label><input type="checkbox" id="spCondOn"> Lasting condition on a failed save</label></div>
+      <div id="condBox" hidden>
+        <input id="spCondName" placeholder="Name (optional), like Muddled Thoughts" style="width:100%">
+        <div id="condIcons"></div>
+        <div id="condPicked" class="hint"></div>
+      </div>
 <div style="margin-bottom:10px"></div>
       <div class="r20box">
         <label><input type="checkbox" id="r20On"> <b>Roll the d20s in Roll20</b></label>
@@ -192,6 +206,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
     <div class="panel">
       <h2>Results <span class="sp"></span><button id="undoBtn" class="small" hidden>↩ Undo roll</button><button id="redoBtn" class="small" hidden>↪ Redo roll</button><button id="clearResults" class="small" hidden title="Hide this result. Nobody's HP changes; the roll stays in History.">✕ Clear</button></h2>
       <div id="syncLine" hidden></div>
+      <div id="markLine" hidden></div>
       <div id="results"></div>
     </div>
 
@@ -228,7 +243,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.7';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.8';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -292,9 +307,9 @@ function newGroup(o={}){
 }
 function defaultState(){
   return {
-    spell:{name:'',dc:15,ability:'dex',onSuccess:'half',isSpell:true,perTarget:false,parts:[{dice:'',type:''}]},
+    spell:{name:'',dc:15,ability:'dex',onSuccess:'half',isSpell:true,perTarget:false,parts:[{dice:'',type:''}],cond:{on:false,name:'',tag:''}},
     groups:[],
-    custom:[],rules:{nat:false,roll20:false,roll20Dmg:false,r20Hp:true,r20Bar:'1',r20TBar:'',r20Dead:true},last:null,pending:null,log:[],pendingInit:null,lastInit:null
+    custom:[],rules:{nat:false,roll20:false,roll20Dmg:false,r20Hp:true,r20Bar:'1',r20TBar:'',r20Dead:true},last:null,pending:null,log:[],pendingInit:null,lastInit:null,markers:null,markQueue:[]
   };
 }
 let state;
@@ -335,6 +350,7 @@ function renderSpell(){
   $('#spAbility').value=s.ability;$('#spDC').value=s.dc;
   document.querySelectorAll('input[name=onSuccess]').forEach(r=>r.checked=r.value===s.onSuccess);
   $('#spIsSpell').checked=s.isSpell;
+  renderCond();
   $('#natRule').checked=state.rules.nat;
   $('#r20On').checked=state.rules.roll20;
   $('#r20Hp').checked=state.rules.r20Hp;$('#r20Bar').value=state.rules.r20Bar;$('#r20TBar').value=state.rules.r20TBar||'';$('#r20Dead').checked=state.rules.r20Dead;
@@ -361,6 +377,114 @@ function renderR20(){
     :ext.roll20Open?`<span class="ok">✅ Add-on connected · Roll20 game open</span>`+(!state.rules.r20Hp?'':ext.script==='ok'?' <span class="ok">· HP link ready</span>':ext.script==='checking'?' · checking the HP link…':ext.script==='missing'?`<br><span class="warn">⚠️ The HP link isn’t set up in this Roll20 game yet.</span> <button class="small" data-setup>Set it up (one time)</button> <button class="small" data-recheck>Check again</button>`:'')
     :`<span class="warn">⚠️ Add-on connected, but no Roll20 game is open in this Chrome.</span>`;
 }
+// ---------- lasting condition: a Roll20 status icon on tokens that failed the save ----------
+// The icons come from the Roll20 game once linked. Until then, this list gives their names.
+const MARK_COLORS=['red','blue','green','brown','purple','pink','yellow'];
+const MARK_NAMES='skull sleepy half-heart half-haze interdiction snail lightning-helix spanner chained-heart chemical-bolt death-zone drink-me edge-crack ninja-mask stopwatch fishing-net overdrive strong fist padlock three-leaves fluffy-wing pummeled tread arrowed aura back-pain black-flag bleeding-eye bolt-shield broken-heart cobweb broken-shield flying-flag radioactive trophy broken-skull frozen-orb rolling-bomb white-tower grab screaming grenade sentry-gun all-for-one angel-outfit archery-target'.split(' ');
+function spellCond(){const s=state.spell;return s.cond||(s.cond={on:false,name:'',tag:''});}
+function markList(){
+  const icons=state.markers&&state.markers.length?state.markers:MARK_NAMES.map(tag=>({tag,name:tag,url:''}));
+  return MARK_COLORS.map(tag=>({tag,name:tag,color:tag})).concat(icons);
+}
+const findMark=tag=>markList().find(m=>m.tag===tag);
+function markIcon(tag){
+  const m=findMark(tag);
+  if(m&&m.color)return `<span class="mdot" style="background:${m.color}"></span>`;
+  if(m&&/^https:\/\//.test(m.url||''))return `<img class="micon" src="${esc(m.url)}" alt="${esc(m.name)}" title="${esc(m.name)}">`;
+  return esc(m?m.name:tag);
+}
+const markName=tag=>{const m=findMark(tag);return m?m.name:tag;};
+function renderCond(){
+  const c=spellCond();
+  $('#spCondOn').checked=!!c.on;
+  $('#condBox').hidden=!c.on;
+  if(document.activeElement!==$('#spCondName'))$('#spCondName').value=c.name||'';
+  $('#condIcons').innerHTML=markList().map(m=>`<button type="button" class="${m.tag===c.tag?'on':''}" data-mark="${esc(m.tag)}" title="${esc(m.name)}">${markIcon(m.tag)}</button>`).join('');
+  $('#condPicked').textContent=c.tag?`Icon: ${markName(c.tag)}. It goes on tokens that fail the save, if they’re selected in Roll20.`:'Pick the icon for tokens that fail the save.';
+}
+async function loadMarkers(){
+  if(!ext.direct)return;
+  try{
+    const d=await r20Send('!msr-markers {req}');
+    if(d.markers&&d.markers.length){state.markers=d.markers;save();renderCond();renderGroups();}
+  }catch(err){/* the list of names still works */}
+}
+// What each token should show is worked out from the results, so changing a die, the DC or using a
+// Legendary Resistance adds or takes off its icon too. Changes wait in a queue until Roll20 takes
+// them, because a token that isn't selected is refused, just like with HP.
+const marks={busy:false,again:false,err:'',done:0};
+const recEnemy=rec=>{const g=findG(rec.gid),e=g&&g.enemies.find(x=>x.id===rec.eid);return {g,e};};
+function queueMark(tokenId,tag,want,name,skipOff){
+  const q=state.markQueue||(state.markQueue=[]);
+  const i=q.findIndex(x=>x.tokenId===tokenId&&x.tag===tag);
+  if(i>=0){q.splice(i,1);return;}   // the opposite change never reached Roll20: they cancel out
+  if(!want&&skipOff)return;         // the token already had this icon before the roll: leave it
+  q.push({tokenId,tag,want,name});
+}
+function markDesired(L){
+  const c=L.spell&&L.spell.cond;
+  if(!c||!c.on||!c.tag)return;
+  L.recs.forEach(rec=>{
+    const r=evalRec(rec,L);if(!r||!r.e.tokenId)return;
+    const want=!r.pass;
+    if(want===!!rec.markOn)return;
+    rec.markOn=want;
+    queueMark(r.e.tokenId,c.tag,want,label(r.g,r.e),rec.markHad);
+  });
+  flushMarks();
+}
+function takeMarksOff(L){
+  const c=L.spell&&L.spell.cond;
+  if(!c||!c.tag)return;
+  L.recs.forEach(rec=>{
+    if(!rec.markOn)return;
+    rec.markOn=false;
+    const {g,e}=recEnemy(rec);
+    if(e&&e.tokenId)queueMark(e.tokenId,c.tag,false,label(g,e),rec.markHad);
+  });
+  flushMarks();
+}
+async function flushMarks(){
+  if(marks.busy){marks.again=true;return;}
+  const q=state.markQueue||(state.markQueue=[]);
+  if(!q.length){renderMarkLine();return;}
+  if(!ext.direct){renderMarkLine();return;}
+  marks.busy=true;marks.err='';marks.done=0;
+  for(const tag of [...new Set(q.map(x=>x.tag))]){
+    const items=q.filter(x=>x.tag===tag);
+    state.markQueue=state.markQueue.filter(x=>x.tag!==tag);
+    try{
+      const d=await r20Send(`!msr-mark {req} m=${encodeURIComponent(tag)} `+items.map(x=>`${x.tokenId}:${x.want?1:0}`).join(' '));
+      const refused=new Set([...(d.notSelected||[]),...(d.missing||[])]);
+      (d.results||[]).forEach(res=>{if(res.had&&items.find(x=>x.tokenId===res.id&&x.want))setMarkHad(res.id,tag);});
+      items.forEach(x=>{if(refused.has(x.tokenId))queueMark(x.tokenId,x.tag,x.want,x.name);else marks.done++;});
+      logEv('mark',`${markName(tag)}: sent ${items.length}, refused ${refused.size}`);
+    }catch(err){
+      items.forEach(x=>queueMark(x.tokenId,x.tag,x.want,x.name));
+      marks.err=r20Problem(err);
+    }
+  }
+  marks.busy=false;
+  save();renderMarkLine();
+  if(marks.again){marks.again=false;flushMarks();}
+}
+function setMarkHad(tokenId,tag){
+  [state.last,state.redo].forEach(L=>{
+    if(!L||!L.spell||!L.spell.cond||L.spell.cond.tag!==tag)return;
+    L.recs.forEach(rec=>{if(recEnemy(rec).e&&recEnemy(rec).e.tokenId===tokenId)rec.markHad=true;});
+  });
+}
+function renderMarkLine(){
+  const el=$('#markLine');if(!el)return;
+  const q=state.markQueue||[];
+  const text=marks.err?`❌ ${marks.err}`
+    :q.length?(ext.direct?`Not selected in Roll20, so the icon wasn’t changed on: ${q.map(x=>x.name).join(', ')}. Select ${q.length===1?'it':'them'} and press Retry.`:`Not linked to Roll20, so the icon wasn’t changed on: ${q.map(x=>x.name).join(', ')}. Click the ⚔️ Mass Save bookmark, select ${q.length===1?'it':'them'} and press Retry.`)
+    :marks.done?`✅ Updated the icon on ${marks.done} token${marks.done===1?'':'s'} in Roll20.`:'';
+  el.hidden=!text;if(!text)return;
+  el.className='syncline '+(marks.err||q.length?'blocked':'ok');
+  el.innerHTML=`<span>🏷️ ${esc(text)}</span>${marks.err||q.length?' <button class="small" data-marksync="retry">Retry</button>':''}`;
+}
+const tokenMarks=s=>String(s||'').split(',').filter(x=>x&&x.split('@')[0]!=='dead');
 function renderParts(){
   const opts=t=>`<option value="">no type</option>`+DMG_TYPES.map(d=>`<option value="${d}"${d===t?' selected':''}>${d}</option>`).join('');
   $('#parts').innerHTML=state.spell.parts.map((p,i)=>`<div class="part">
@@ -374,6 +498,10 @@ function bindSpell(){
   $('#spDC').addEventListener('input',e=>{s().dc=clamp(num(e.target.value,10),1,40);save();});
   document.querySelectorAll('input[name=onSuccess]').forEach(r=>r.addEventListener('change',e=>{s().onSuccess=e.target.value;save();}));
   $('#spIsSpell').addEventListener('change',e=>{s().isSpell=e.target.checked;save();});
+  $('#spCondOn').addEventListener('change',e=>{spellCond().on=e.target.checked;save();renderCond();if(e.target.checked)loadMarkers();});
+  $('#spCondName').addEventListener('input',e=>{spellCond().name=e.target.value;save();});
+  $('#condIcons').addEventListener('click',e=>{const b=e.target.closest('[data-mark]');if(!b)return;spellCond().tag=b.dataset.mark;save();renderCond();});
+  $('#markLine').addEventListener('click',e=>{if(e.target.dataset.marksync==='retry')flushMarks();});
   $('#natRule').addEventListener('change',e=>{state.rules.nat=e.target.checked;save();recompute();});
   $('#r20On').addEventListener('change',e=>{state.rules.roll20=e.target.checked;save();renderR20();if(e.target.checked)pingExt();});
   $('#r20Hp').addEventListener('change',e=>{state.rules.r20Hp=e.target.checked;save();renderR20();checkScript(true);});
@@ -426,7 +554,7 @@ function groupHTML(g){
     return `<div class="enemy${e.hp<=0?' dead':''}" data-eid="${e.id}">
       <span class="ehandle" title="Drag onto another card — or below the cards for its own card">⠿</span>
       <input type="checkbox" data-e="target" ${K(e.id+'t')} ${e.target?'checked':''} title="Ticked enemies are the ones that roll">
-      <div><div class="nm">${e.hp<=0?'💀 ':''}${e.tokenId?`<span title="${e.noBar?'Roll20 token (no HP on its bar — not updated)':'Linked to a Roll20 token'}">${e.noBar?'⛓️‍💥':'🔗'}</span> `:''}${esc(label(g,e))} ${lr}</div><div class="bar ${cls}"><i style="width:${pct}%"></i></div></div>
+      <div><div class="nm">${e.hp<=0?'💀 ':''}${e.tokenId?`<span title="${e.noBar?'Roll20 token (no HP on its bar — not updated)':'Linked to a Roll20 token'}">${e.noBar?'⛓️‍💥':'🔗'}</span> `:''}${esc(label(g,e))} ${lr}${(e.markers||[]).map(x=>`<span title="${esc(markName(x.split('@')[0]))} in Roll20">${markIcon(x.split('@')[0])}</span>`).join('')}</div><div class="bar ${cls}"><i style="width:${pct}%"></i></div></div>
       <div class="ectl">
         <input type="number" data-e="hp" ${K(e.id+'h')} value="${e.hp}" title="Current HP"><span class="muted">/</span>
         <input type="number" data-e="max" ${K(e.id+'m')} value="${e.max}" title="Max HP">
@@ -715,6 +843,7 @@ function bindGroups(){
 function doRoll(forceWait){
   if(state.pendingInit){toast('Initiative is waiting for its dice — finish or stop that first.');return;}
   const sp=state.spell;
+  if(sp.cond&&sp.cond.on&&!sp.cond.tag){toast('Pick the icon for the lasting condition first.');return;}
   const parts=sp.parts.filter(p=>String(p.dice).trim());
   for(const p of parts)if(!parseDice(p.dice).ok){toast(`Can't read the damage “${p.dice}”. Use something like 8d6 or 3d8+4.`);return;}
   for(const g of state.groups)if(g.bonus.trim()&&!parseDice(g.bonus).ok){toast(`Can't read “${g.bonus}” in Extra to saves for ${g.name}.`);return;}
@@ -794,7 +923,7 @@ window.addEventListener('message',ev=>{
   const fromAddon=d.source==='msr-ext'&&ev.source===window;
   if(!fromRoll20&&!fromAddon)return;
   if(d.type==='pong'){pongAt=Date.now();const was=ext.state+ext.roll20Open;ext.state='ok';ext.roll20Open=d.roll20Open;ext.version=d.version;
-    if(d.direct){const first=!ext.direct;ext.direct=true;ext.script='ok';if(first)setTimeout(()=>refreshTokens('linked'),300);}
+    if(d.direct){const first=!ext.direct;ext.direct=true;ext.script='ok';if(first){setTimeout(()=>refreshTokens('linked'),300);setTimeout(loadMarkers,500);renderMarkLine();}}
     renderR20();checkScript();if(was!==ext.state+ext.roll20Open)logEv('ext',`connected v${d.version}${d.direct?' (bookmark)':''}, roll20 open: ${d.roll20Open}`);}
   else if(d.type==='stale'){ext.state='stale';renderR20();logEv('ext','stale (add-on reloaded)');}
   else if(d.type==='roll'){ext.state='ok';ext.roll20Open=true;renderR20();onRoll20Roll(d.roll);}
@@ -1222,7 +1351,7 @@ function mergeTokens(tokens,g){
     const hasHp=t.hp!=null;if(!hasHp)noHp++;
     const hp=hasHp?Math.max(0,t.hp):rollHp(g.hp);
     return {id:prev?prev.id:uid(),n:i+1,tname:String(t.name||'').trim(),hp,max:Math.max(t.max||0,hp),temp:t.temp!=null?Math.max(0,t.temp):(prev?prev.temp:0),syncedTemp:t.temp!=null?Math.max(0,t.temp):null,lrLeft:prev?prev.lrLeft:g.lr,
-      target:true,tokenId:t.id,synced:hasHp?hp:null,needInit:!hasHp,noBar:false,blocked:false};
+      target:true,tokenId:t.id,synced:hasHp?hp:null,needInit:!hasHp,noBar:false,blocked:false,markers:tokenMarks(t.markers)};
   });
   g.count=g.enemies.length;
   save();renderGroups();renderResults();
@@ -1299,6 +1428,7 @@ function applyRoll20Values(t){
     if(e.tokenId!==t.id)return;
     const nm=String(t.name||'').trim();
     if(nm&&nm!==e.tname){e.tname=nm;named=true;}
+    if(t.markers!=null){const mk=tokenMarks(t.markers);if(mk.join()!==(e.markers||[]).join()){e.markers=mk;named=true;}}
     if(t.hp!=null&&!e.needInit&&e.synced!=null&&!inflight.has(t.id+'hp')&&t.hp!==e.synced){
       const unsent=e.synced-e.hp;e.synced=t.hp;e.hp=Math.max(0,t.hp-unsent);hpChanged=true;
     }
@@ -1345,6 +1475,7 @@ function onTokenChange(t){
     if(e.tokenId!==t.id)return;
     const nm=String(t.name||'').trim();
     if(nm&&nm!==e.tname){e.tname=nm;changed=true;}
+    if(t.markers!=null){const mk=tokenMarks(t.markers);if(mk.join()!==(e.markers||[]).join()){e.markers=mk;changed=true;}}
     const b=t.bars&&t.bars[state.rules.r20Bar];
     if(b&&b.v!=null&&!e.needInit&&e.synced!=null){
       if(inflight.get(t.id+'hp')===b.v)e.synced=b.v;
@@ -1416,10 +1547,12 @@ function recompute(){
   const entry=state.log.find(x=>x.id===L.id);
   if(entry)entry.text=`DC ${L.spell.dc} ${L.spell.ability.toUpperCase()} save: ${failN} failed, ${passN} passed, ${downN} dropped, ${dmgT} total damage`;
   save();renderGroups();renderResults();
+  markDesired(L);
 }
 function undo(){
   const L=state.last;if(!L)return;
   for(const rec of L.recs){const g=findG(rec.gid),e=g&&g.enemies.find(x=>x.id===rec.eid);if(e){e.hp=rec.before.hp;e.temp=rec.before.temp;e.lrLeft=rec.before.lrLeft;}}
+  takeMarksOff(L);
   state.log=state.log.filter(x=>x.id!==L.id);state.last=null;state.redo=L;save();renderGroups();renderResults();toast('Roll undone — HP restored. Changed your mind? Press Redo.');
 }
 // Puts an undone roll back: same dice, same damage, applied to the enemies' HP as they are now.
@@ -1471,7 +1604,7 @@ function renderResults(){
     const dmgCell=(rec.dmg?`<span class="tag">${rec.dmg.map(p=>`${p.total}${p.type?' '+esc(p.type):''}`).join(' + ')}</span>`:'')+`<b>${r.dmg}</b>${r.notes.length?`<span class="tag">${esc(r.notes.join(', '))}</span>`:''}`;
     const hpCell=`${rec.before.hp}${rec.before.temp?`<span class="tag">+${rec.before.temp} temp</span>`:''} → <b class="${r.e.hp<=0?'down':''}">${r.e.hp<=0?'💀 0':r.e.hp}</b>`;
     return `<tr><td><b>${esc(label(r.g,r.e))}</b></td><td>${d20}</td><td class="muted" style="font-size:12px">${modTxt}</td>
-      <td><b>${r.total}</b></td><td><span class="badge ${r.pass?'pass':'fail'}">${r.pass?'PASS':'FAIL'}</span>${r.why?`<span class="tag">${esc(r.why)}</span>`:''}${lrBtn}</td>
+      <td><b>${r.total}</b></td><td><span class="badge ${r.pass?'pass':'fail'}">${r.pass?'PASS':'FAIL'}</span>${r.why?`<span class="tag">${esc(r.why)}</span>`:''}${lrBtn}${!r.pass&&sp.cond&&sp.cond.on&&sp.cond.tag?`<span class="tag">${markIcon(sp.cond.tag)}${esc(sp.cond.name||markName(sp.cond.tag))}</span>`:''}</td>
       <td>${dmgCell}</td><td>${hpCell}</td></tr>`;}).join('');
   box.innerHTML=`<div><b>${sp.ability.toUpperCase()} save</b> <span class="muted">DC</span> <input type="number" id="resDC" min="1" max="40" value="${sp.dc}" ${dis}> <span class="muted">· ${sp.onSuccess==='half'?'half damage':'no damage'} on a pass</span></div>
     <div class="sumline"><span class="pill fail">${s.failN} failed</span><span class="pill pass">${s.passN} passed</span><span class="pill down">💀 ${s.downN} dropped</span><span class="pill down">${s.dmgT} damage dealt</span></div>

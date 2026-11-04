@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.1.4';
+  const VERSION = '2.1.5';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -129,7 +129,7 @@
     const parts = String(text).trim().split(/\s+/), cmd = parts[0], req = parts[1] || '';
     const opts = {}, pairs = [];
     parts.slice(2).forEach(p => {
-      const eq = /^(bar|dead|tbar|empty0|open|sel)=(\w+)$/.exec(p);
+      const eq = /^(bar|dead|tbar|empty0|open|sel|m)=([\w%.-]+)$/.exec(p);
       if (eq) { opts[eq[1]] = eq[2]; return; }
       const i = p.lastIndexOf(':');
       // "id:number" or, for !msr-init, "id:hp~max"
@@ -141,6 +141,14 @@
 
     if (cmd === '!msr-ping') { reply('PONG', { v: VERSION }); return; }
 
+    // Read-only: this game's status icons, including any custom sets it uses.
+    if (cmd === '!msr-markers') {
+      let list = [];
+      try { list = JSON.parse(Campaign.get('token_markers') || '[]'); } catch (e) {}
+      reply('MARKERS', { markers: list.map(x => ({ tag: x.tag, name: x.name, url: x.url })) });
+      return;
+    }
+
     // Read-only: current name/HP/temp HP of the listed tokens on this map (no selection needed —
     // nothing is changed). Lets the website catch up on edits made while it wasn't listening.
     if (cmd === '!msr-get') {
@@ -149,7 +157,7 @@
         const m = graphics.get(p.id);
         if (!m) { missing.push(p.id); return; }
         const b = readBar(m, bar), t = tbar ? readBar(m, tbar) : null;
-        tokens.push({ id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max, temp: t ? (t.cur || 0) : null });
+        tokens.push({ id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max, temp: t ? (t.cur || 0) : null, markers: m.get('statusmarkers') || '' });
       });
       reply('GET', { tokens, missing });
       return;
@@ -169,8 +177,26 @@
       reply('SEL', { tokens: sel.map(m => {
         const b = readBar(m, bar), t = tbar ? readBar(m, tbar) : null;
         return { id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max, temp: t ? (t.cur || 0) : null,
-          x: +m.get('left') || 0, y: +m.get('top') || 0 };   // map position, so the site can order left → right
+          markers: m.get('statusmarkers') || '', x: +m.get('left') || 0, y: +m.get('top') || 0 };   // map position, so the site can order left → right
       }) });
+      return;
+    }
+    // !msr-mark m=<icon> id:1 (add) or id:0 (take off). Refuses tokens that aren't selected, and
+    // answers whether each token already had the icon, so Undo won't take off one it didn't add.
+    if (cmd === '!msr-mark') {
+      const tag = decodeURIComponent(opts.m || '');
+      const results = [], notSelected = [];
+      const isTag = x => x === tag || x.indexOf(tag + '@') === 0;   // "tag@2" is the icon with a number
+      if (tag) pairs.forEach(p => {
+        const m = selById.get(p.id);
+        if (!m) { notSelected.push(p.id); return; }
+        const list = String(m.get('statusmarkers') || '').split(',').filter(Boolean);
+        const had = list.some(isTag);
+        if (p.n === 1 && !had) list.push(tag);
+        m.save({ statusmarkers: (p.n === 1 ? list : list.filter(x => !isTag(x))).join(',') });
+        results.push({ id: p.id, had });
+      });
+      reply('MARK', { results, missing: [], notSelected });
       return;
     }
     // !msr-dmg: take damage (negative heals). !msr-init: set the bar's HP and max (for image
@@ -288,10 +314,10 @@
   let watched = null;
   const onGraphicChange = m => {
     const ch = (m && m.changed) || {};
-    if (!Object.keys(ch).some(k => /^(name|bar[123]_(value|max))$/.test(k))) return;
+    if (!Object.keys(ch).some(k => /^(name|statusmarkers|bar[123]_(value|max))$/.test(k))) return;
     const bars = {};
     ['1', '2', '3'].forEach(i => { const b = readBar(m, i); bars[i] = { v: b.cur, max: b.max }; });
-    send({ type: 'tokenchange', tok: { id: m.id, name: m.get('name') || '', bars } });
+    send({ type: 'tokenchange', tok: { id: m.id, name: m.get('name') || '', bars, markers: m.get('statusmarkers') || '' } });
   };
   const watchPage = () => {
     const page = window.Campaign && Campaign.activePage && Campaign.activePage();
