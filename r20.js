@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: rolls only ever change tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.3.1';
+  const VERSION = '2.3.2';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -174,20 +174,17 @@
     const selById = new Map(sel.map(m => [m.id, m]));
 
     // !msr-name id:name renames a selected token. It only ever saves the name: Nameplate and the
-    // players' See permission are the GM's, so the link never writes them. A nameless token whose
-    // Nameplate is on is skipped ("kept"), since giving it the card's name would show that name on
-    // the map. Answers with each token's old name, for Undo.
+    // players' See permission are the GM's, so the link never writes them. Answers with each
+    // token's old name, for Undo.
     if (cmd === '!msr-name') {
-      const graphics = Campaign.activePage().thegraphics, prev = [], missing = [], notSelected = [], kept = [];
+      const graphics = Campaign.activePage().thegraphics, prev = [], missing = [], notSelected = [];
       pairs.forEach(p => {
         const m = selById.get(p.id);
         if (!m) { (graphics.get(p.id) ? notSelected : missing).push(p.id); return; }
-        const was = m.get('name') || '', name = decodeURIComponent(p.raw.split(',')[0]);
-        if (!was && name && m.get('showname')) { kept.push(p.id); return; }
-        prev.push(p.id + ':' + encodeURIComponent(was));
-        m.save({ name });
+        prev.push(p.id + ':' + encodeURIComponent(m.get('name') || ''));
+        m.save({ name: decodeURIComponent(p.raw.split(',')[0]) });
       });
-      reply('NAME', { prev, missing, notSelected, kept });
+      reply('NAME', { prev, missing, notSelected });
       return;
     }
 

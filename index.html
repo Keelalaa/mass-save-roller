@@ -259,7 +259,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.8.3';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.8.4';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -1451,15 +1451,14 @@ async function numberTokens(g,used,step,selIds){
   });
   try{
     const d=await r20Send('!msr-name {req} '+named.map(x=>`${x.e.tokenId}:${encodeURIComponent(x.name)}`).join(' '));
-    const kept=d.kept||[],off=new Set([...(d.notSelected||[]),...(d.missing||[]),...kept]);
+    const off=new Set([...(d.notSelected||[]),...(d.missing||[])]);
     const done=named.filter(x=>!off.has(x.e.tokenId));
     done.forEach(x=>{x.e.tname=x.name;});
     step.names=d.prev||[];
     logEv('rename',`${done.length} of ${named.length} in ${g.name}`);
     save();renderGroups();renderResults();
-    const keptMsg=kept.length?` ${kept.length} with no name and Nameplate on stayed nameless, so no name shows on the map.`:'';
-    if(!done.length)return keptMsg||' Their names couldn’t be numbered because they’re no longer selected.';
-    return ` Numbered ${done.length} in Roll20: ${done[0].name}${done.length>1?` to ${done[done.length-1].name}`:''}. Nameplates weren’t changed.`+keptMsg;
+    if(!done.length)return ' Their names couldn’t be numbered because they’re no longer selected.';
+    return ` Numbered ${done.length} in Roll20: ${done[0].name}${done.length>1?` to ${done[done.length-1].name}`:''}. Nameplates weren’t changed.`;
   }catch(err){return ' '+r20Problem(err);}
 }
 // The selected Roll20 tokens are added to this group (the group keeps the name and save modifiers
