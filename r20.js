@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.1.7';
+  const VERSION = '2.2.0';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -173,8 +173,27 @@
     const sel = selectedGraphics();
     const selById = new Map(sel.map(m => [m.id, m]));
 
+    // !msr-name id:name renames a selected token and makes sure the GM can see its nameplate. What
+    // players could see stays the same: a plate they couldn't see becomes GM-only. Undo sends
+    // id:name,show,players to put a token exactly back. Answers with what each one had before.
+    if (cmd === '!msr-name') {
+      const graphics = Campaign.activePage().thegraphics, prev = [], missing = [], notSelected = [];
+      pairs.forEach(p => {
+        const m = selById.get(p.id);
+        if (!m) { (graphics.get(p.id) ? notSelected : missing).push(p.id); return; }
+        const was = { name: m.get('name') || '', show: !!m.get('showname'), players: !!m.get('showplayers_name') };
+        prev.push(p.id + ':' + encodeURIComponent(was.name) + ',' + (was.show ? 1 : 0) + ',' + (was.players ? 1 : 0));
+        const v = p.raw.split(','), ch = { name: decodeURIComponent(v[0]) };
+        if (v.length === 3) { ch.showname = v[1] === '1'; ch.showplayers_name = v[2] === '1'; }
+        else if (!was.show) { ch.showname = true; ch.showplayers_name = false; }
+        m.save(ch);
+      });
+      reply('NAME', { prev, missing, notSelected });
+      return;
+    }
+
     if (cmd === '!msr-sel') {
-      reply('SEL', { tokens: sel.map(m => {
+      reply('SEL', { used: Campaign.activePage().thegraphics.models.map(m => String(m.get('name') || '').trim()).filter(Boolean), tokens: sel.map(m => {
         const b = readBar(m, bar), t = tbar ? readBar(m, tbar) : null;
         return { id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max, temp: t ? (t.cur || 0) : null,
           markers: m.get('statusmarkers') || '', x: +m.get('left') || 0, y: +m.get('top') || 0 };   // map position, so the site can order left → right

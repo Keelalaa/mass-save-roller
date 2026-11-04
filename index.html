@@ -259,7 +259,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.4.2';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.5.0';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -721,8 +721,25 @@ function snapResults(what){
   if(undoStack.length>40)undoStack.shift();
   redoStack.length=0;renderUndo();
 }
+// Undoing "Use selected" also takes token names back. Those are Roll20 changes, so the tokens must
+// be selected. If any aren't, nothing is undone yet and the step stays on the stack.
+async function swapNames(s,other){
+  let d;
+  try{d=await r20Send('!msr-name {req} '+s.names.join(' '));}
+  catch(err){(other===redoStack?undoStack:redoStack).push(s);renderUndo();toast(r20Problem(err));return;}
+  if(d.notSelected&&d.notSelected.length){
+    if(d.prev&&d.prev.length)r20Send('!msr-name {req} '+d.prev.join(' ')).catch(()=>{});
+    (other===redoStack?undoStack:redoStack).push(s);renderUndo();
+    toast(`Select all ${s.names.length} of those tokens in Roll20 to change their names back, then try again.`);
+    return;
+  }
+  swapIn({what:s.what,groups:s.groups},other);
+  other[other.length-1].names=d.prev||[];
+  renderUndo();
+}
 function swapIn(s,other){
   if(s.init!==undefined){swapInit(s,other);return;}
+  if(s.names&&s.names.length){swapNames(s,other);return;}
   if(s.results){other.push({what:s.what,results:resultsCopy()});const r=JSON.parse(s.results);state.last=r.last;state.redo=r.redo;state.log=r.log;state.lastInit=r.lastInit;save();renderResults();}
   else{other.push({what:s.what,groups:JSON.stringify(state.groups)});restoreGroups(s.groups);lockLast();save();renderGroups();renderResults();}
   renderUndo();
@@ -1371,8 +1388,37 @@ async function pullTokens(gid){
     if(!d.tokens||!d.tokens.length){toast('Select this group’s monster tokens in Roll20 first, then click this again.');return;}
     const g=findG(gid);if(!g)return;
     snap(`use selected Roll20 tokens in ${g.name}`);
-    mergeTokens(d.tokens,g);
+    const step=undoStack[undoStack.length-1],msg=mergeTokens(d.tokens,g);
+    toast(msg+(d.used?await numberTokens(g,d.used,step):''));
   }catch(err){toast(r20Problem(err));}
+}
+// Tokens with no name, or a name another token on this map also has, get numbered in Roll20 ("Cat 1",
+// "Cat 2") for easier tracking. A name nothing else has is left alone. Numbers already taken on the
+// map are skipped, so a second group of Cats carries on from the first.
+async function numberTokens(g,used,step){
+  const count={};used.forEach(n=>{count[n]=(count[n]||0)+1;});
+  const rows=g.enemies.filter(e=>e.tokenId);
+  const change=rows.filter(e=>!e.tname||count[e.tname]>1);
+  if(!change.length)return '';
+  const taken=new Set(used.filter(n=>!change.some(e=>e.tname===n)));
+  const single=g.name.trim().replace(/([^s])s$/i,'$1')||'Enemy';
+  const named=change.map(e=>{
+    const base=e.tname?e.tname.replace(/\s*\d+$/,'').trim()||e.tname:single;
+    let n=1;while(taken.has(`${base} ${n}`))n++;
+    const name=`${base} ${n}`;taken.add(name);
+    return {e,name};
+  });
+  try{
+    const d=await r20Send('!msr-name {req} '+named.map(x=>`${x.e.tokenId}:${encodeURIComponent(x.name)}`).join(' '));
+    const off=new Set([...(d.notSelected||[]),...(d.missing||[])]);
+    const done=named.filter(x=>!off.has(x.e.tokenId));
+    done.forEach(x=>{x.e.tname=x.name;});
+    step.names=d.prev||[];
+    logEv('rename',`${done.length} of ${named.length} in ${g.name}`);
+    save();renderGroups();renderResults();
+    if(!done.length)return ' Their names couldn’t be numbered because they’re no longer selected.';
+    return ` Numbered ${done.length} in Roll20: ${done[0].name}${done.length>1?` to ${done[done.length-1].name}`:''}.`;
+  }catch(err){return ' '+r20Problem(err);}
 }
 // The selected Roll20 tokens become this group's enemies (the group keeps the name and save
 // modifiers the GM typed). Each enemy shows its token's own name and HP. A token can only be in
@@ -1397,7 +1443,7 @@ function mergeTokens(tokens,g){
   });
   g.count=g.enemies.length;
   save();renderGroups();renderResults();
-  toast(`Put ${tokens.length} token${tokens.length===1?'':'s'} into ${g.name}.`+(noHp?` ${noHp} had no HP on bar ${state.rules.r20Bar} — gave them “HP each”. To change it, edit HP each and press Reset all HP.`:'')+(lost?` ${lost} had HP changes that never reached Roll20 — now showing Roll20’s HP instead.`:''));
+  return (`Put ${tokens.length} token${tokens.length===1?'':'s'} into ${g.name}.`+(noHp?` ${noHp} had no HP on bar ${state.rules.r20Bar} — gave them “HP each”. To change it, edit HP each and press Reset all HP.`:'')+(lost?` ${lost} had HP changes that never reached Roll20 — now showing Roll20’s HP instead.`:''));
 }
 // Any time a Roll20-linked enemy's HP on this page differs from what Roll20 last confirmed, the
 // difference is sent. The Mod script refuses tokens that aren't selected in Roll20 at that moment.
