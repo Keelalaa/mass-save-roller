@@ -259,7 +259,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.5.0';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.6.0';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -603,6 +603,7 @@ function groupHTML(g){
         <input type="number" data-e="amt" ${K(e.id+'a')} placeholder="amount" title="Type an amount, then − to damage or + to heal" style="width:64px">
         <button class="small" data-act="hurt" title="Deal damage">−</button><button class="small" data-act="heal" title="Heal">+</button>
         ${g.enemies.length>1?`<button class="small" data-act="split" title="Give this enemy its own card (for different modifiers)">⇱</button>`:''}
+        <button class="small" data-act="rmrow" title="Take this enemy off the card. Nothing changes in Roll20.">✕</button>
       </div></div>`;}).join('');
   return `<div class="group${closed.has(g.id)?' closed':''}" data-gid="${g.id}">
     <div class="ghead">
@@ -616,7 +617,7 @@ function groupHTML(g){
       <button class="icon danger" data-act="delgroup" title="Delete group">✕</button>
     </div>
     <div class="gbody">
-      <div class="row pullrow"><button class="primary small" data-act="pull" title="Puts the tokens you have selected in Roll20 into this group">⬇ Use selected Roll20 tokens</button><span class="hint">Select this group's monsters in Roll20 first.</span></div>
+      <div class="row pullrow"><button class="primary small" data-act="pull" title="Adds the tokens you have selected in Roll20 to this group. Tokens already on the card stay.">⬇ Add selected Roll20 tokens</button><span class="hint">Select this group's monsters in Roll20 first. Forgot one? Select it and click again.</span></div>
       <div class="row">
         <label><span class="lbl">HP each</span><input data-f="hp" ${K('hp')} value="${esc(g.hp)}" style="width:110px" placeholder="7 or 2d6"></label>
         <label><span class="lbl">Temp HP each</span><input data-f="tempEach" ${K('tempEach')} type="number" min="0" value="${num(g.tempEach,0)||''}" style="width:80px" placeholder="0" title="Temporary HP new enemies start with — Reset all HP gives everyone this"></label>
@@ -808,6 +809,7 @@ function bindGroups(){
     if(a==='toggle'){closed.toggle(g.id);b.closest('.group').classList.toggle('closed');renderToggleAll();return;}
     if(a==='pull'){pullTokens(g.id);return;}
     if(a==='split'){splitEnemy(g,e);return;}
+    if(a==='rmrow'&&e){const name=label(g,e);snap(`take ${name} off ${g.name}`);g.enemies=g.enemies.filter(x=>x!==e);g.count=g.enemies.length;lockLast();save();renderGroups();renderResults();toast(`Took ${name} off ${g.name}. Nothing changed in Roll20.`,'Undo',undoEdit);return;}
     if(a==='chip'){const d=b.dataset.type,cyc={undefined:'resist',resist:'immune',immune:'vuln',vuln:undefined};const n=cyc[g.dmg[d]];if(n)g.dmg[d]=n;else delete g.dmg[d];save();recompute();return;}
     if(a==='hurt'||a==='heal'){
       const amt=Math.max(0,num(b.closest('.enemy').querySelector('[data-e=amt]').value));if(!amt)return;
@@ -1026,14 +1028,14 @@ async function startInit(forceWait){
   }
   const recs=[];
   state.groups.forEach(g=>g.enemies.forEach(e=>{if(initRolls(e,sel))recs.push({gid:g.id,eid:e.id,d20:null});}));
-  if(!recs.length){toast(!sel?'Tick at least one enemy that is still standing.':sel.length?'Those tokens aren’t on a card yet, or are at 0 HP. Use ⬇ Use selected Roll20 tokens first.':'Select the tokens that are rolling in Roll20 first, then click this again.');return;}
+  if(!recs.length){toast(!sel?'Tick at least one enemy that is still standing.':sel.length?'Those tokens aren’t on a card yet, or are at 0 HP. Use ⬇ Add selected Roll20 tokens first.':'Select the tokens that are rolling in Roll20 first, then click this again.');return;}
   state.pendingInit={id:uid(),recs,sel};
   logEv('init-start',`targets=${recs.length} tokens=${recs.filter(r=>enemyOf(r).e.tokenId).length} selected=${sel?sel.length:'-'}`);
   if(state.rules.roll20||forceWait===true){
     save();renderResults();
     const onCards=new Set(state.groups.flatMap(g=>g.enemies.map(e=>e.tokenId)));
     const off=sel?sel.filter(id=>!onCards.has(id)).length:0;
-    if(off)toast(`${off} selected token${off===1?' isn’t':'s aren’t'} on a card, so ${off===1?'it isn’t':'they aren’t'} rolling. Use ⬇ Use selected Roll20 tokens to add ${off===1?'it':'them'}.`);
+    if(off)toast(`${off} selected token${off===1?' isn’t':'s aren’t'} on a card, so ${off===1?'it isn’t':'they aren’t'} rolling. Use ⬇ Add selected Roll20 tokens to add ${off===1?'it':'them'}.`);
     else if(ext.state!=='ok'&&forceWait!==true)toast('Not linked to Roll20 — click the ⚔️ Mass Save bookmark in Roll20, or paste your dice in the Initiative box.');
     return;
   }
@@ -1398,7 +1400,9 @@ async function pullTokens(gid){
 async function numberTokens(g,used,step){
   const count={};used.forEach(n=>{count[n]=(count[n]||0)+1;});
   const rows=g.enemies.filter(e=>e.tokenId);
-  const change=rows.filter(e=>!e.tname||count[e.tname]>1);
+  // A plain "Cat" that joins Cat 1 to Cat 7 needs a number too, even though no other token is just "Cat".
+  const numbered=name=>used.some(n=>n!==name&&n.startsWith(name+' ')&&/^\d+$/.test(n.slice(name.length+1)));
+  const change=rows.filter(e=>!e.tname||count[e.tname]>1||numbered(e.tname));
   if(!change.length)return '';
   const taken=new Set(used.filter(n=>!change.some(e=>e.tname===n)));
   const single=g.name.trim().replace(/([^s])s$/i,'$1')||'Enemy';
@@ -1420,12 +1424,15 @@ async function numberTokens(g,used,step){
     return ` Numbered ${done.length} in Roll20: ${done[0].name}${done.length>1?` to ${done[done.length-1].name}`:''}.`;
   }catch(err){return ' '+r20Problem(err);}
 }
-// The selected Roll20 tokens become this group's enemies (the group keeps the name and save
-// modifiers the GM typed). Each enemy shows its token's own name and HP. A token can only be in
-// one group, so it's taken out of any other group first. Only these exact tokens can change later.
+// The selected Roll20 tokens are added to this group (the group keeps the name and save modifiers
+// the GM typed), so a forgotten token can be added later on its own. Tokens already on the card stay,
+// and get fresh values if they're selected too. A fresh card's placeholder rows make way for the
+// tokens. A token can only be in one group, so it's taken out of any other group first.
 function mergeTokens(tokens,g){
   lockLast();
   const selIds=new Set(tokens.map(t=>t.id)),old=new Map();
+  const onCard=new Set(g.enemies.map(e=>e.tokenId).filter(Boolean));
+  const stays=onCard.size?g.enemies:[];
   g.enemies.forEach(e=>{if(e.tokenId)old.set(e.tokenId,e);});
   state.groups.forEach(x=>{x.enemies.forEach(e=>{if(selIds.has(e.tokenId))old.set(e.tokenId,e);});if(x!==g){x.enemies=x.enemies.filter(e=>!selIds.has(e.tokenId));x.count=x.enemies.length;}});
   const lost=[...old.values()].filter(e=>selIds.has(e.tokenId)&&e.synced!=null&&e.hp!==e.synced).length;
@@ -1433,7 +1440,7 @@ function mergeTokens(tokens,g){
   // Order by position on the map: left → right (higher one first when level), so "Cat 1" is the
   // leftmost and dice from "/r 4d20" are handed out in that order.
   tokens=tokens.slice().sort((a,b)=>Math.abs((a.x||0)-(b.x||0))>8?(a.x||0)-(b.x||0):(a.y||0)-(b.y||0));
-  g.enemies=tokens.map((t,i)=>{
+  const fromToken=tokens.map((t,i)=>{
     const prev=old.get(t.id);
     // Image tokens often have an empty HP bar: they get "HP each" and Roll20's bar is filled in.
     const hasHp=t.hp!=null;if(!hasHp)noHp++;
@@ -1441,9 +1448,15 @@ function mergeTokens(tokens,g){
     return {id:prev?prev.id:uid(),n:i+1,tname:String(t.name||'').trim(),hp,max:Math.max(t.max||0,hp),temp:t.temp!=null?Math.max(0,t.temp):(prev?prev.temp:0),syncedTemp:t.temp!=null?Math.max(0,t.temp):null,lrLeft:prev?prev.lrLeft:g.lr,
       target:true,tokenId:t.id,synced:hasHp?hp:null,needInit:!hasHp,noBar:false,blocked:false,markers:tokenMarks(t.markers)};
   });
+  // Rows stay where they were, and new tokens join the end, left → right.
+  const byToken=new Map(fromToken.map(e=>[e.tokenId,e]));
+  const added=fromToken.filter(e=>!onCard.has(e.tokenId));
+  g.enemies=stays.map(e=>byToken.get(e.tokenId)||e).concat(added);
+  g.enemies.forEach((e,i)=>{e.n=i+1;});
   g.count=g.enemies.length;
   save();renderGroups();renderResults();
-  return (`Put ${tokens.length} token${tokens.length===1?'':'s'} into ${g.name}.`+(noHp?` ${noHp} had no HP on bar ${state.rules.r20Bar} — gave them “HP each”. To change it, edit HP each and press Reset all HP.`:'')+(lost?` ${lost} had HP changes that never reached Roll20 — now showing Roll20’s HP instead.`:''));
+  const n=added.length;
+  return ((n?`Added ${n} token${n===1?'':'s'} to ${g.name}.`:`Those tokens were already in ${g.name}, so their HP was re-read.`)+(noHp?` ${noHp} had no HP on bar ${state.rules.r20Bar} — gave them “HP each”. To change it, edit HP each and press Reset all HP.`:'')+(lost?` ${lost} had HP changes that never reached Roll20 — now showing Roll20’s HP instead.`:''));
 }
 // Any time a Roll20-linked enemy's HP on this page differs from what Roll20 last confirmed, the
 // difference is sent. The Mod script refuses tokens that aren't selected in Roll20 at that moment.
@@ -1508,7 +1521,7 @@ function tempBar(){const t=state.rules.r20TBar;return /^[123]$/.test(t)&&t!==sta
 // Roll20 reports token edits made there (renames, HP or temp HP typed into a bar): mirror them here.
 // Catch up on edits made in Roll20 while this page wasn't listening (healing, other damage, temp
 // HP, renames): re-read every linked token. Runs when the link connects and right before each
-// mass save, so nobody has to press "Use selected Roll20 tokens" just to refresh.
+// mass save, so nobody has to press "Add selected Roll20 tokens" just to refresh.
 // A change of ours that hasn't reached Roll20 yet is kept on top of Roll20's new value.
 function applyRoll20Values(t){
   let hpChanged=false,named=false;const tb=tempBar();
