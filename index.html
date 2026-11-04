@@ -119,6 +119,12 @@ header .sp{flex:1}
 .wlist{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 .wlist span{background:#1b1722;border-radius:6px;padding:3px 8px;font-size:13px}
 .wlist span.done{background:#1f4a32}
+button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
+#initBonus{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+#initBonus:empty{display:none}
+#initBonus label{display:flex;align-items:center;gap:8px;font-size:13px}
+#initBonus .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+#initBonus input{width:64px}
 .r20box.nohp .hpopt{display:none}
 #rollBtn.stop,#initBtn.stop{background:linear-gradient(#e0565b,#a8373b);color:#fff}
 .mergesel{font-size:13px;padding:4px 6px;max-width:150px}
@@ -191,6 +197,7 @@ header .sp{flex:1}
 
     <div class="panel" id="initPanel">
       <h2>Initiative <span class="sp"></span><button id="initUndo" class="small" hidden>↩ Undo</button><button id="initRedo" class="small" hidden>↪ Redo</button><button id="initClear" class="small" hidden title="Hide this list. Roll20's Turn Order stays as it is.">✕ Clear</button></h2>
+      <div id="initBonus"></div>
       <button id="initBtn" class="primary big">⚡ Roll initiative</button>
       <div class="hint" id="initHint"></div>
       <div id="initBox"></div>
@@ -221,7 +228,7 @@ header .sp{flex:1}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.2';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.3';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -407,7 +414,7 @@ function renderGroups(){
   const fk=document.activeElement?.dataset?.k;
   box.innerHTML=state.groups.map(groupHTML).join('')||'<p class="muted">No enemies yet. Click <b>+ Add enemy group</b>.</p>';
   if(fk){const el=box.querySelector(`[data-k="${CSS.escape(fk)}"]`);if(el){el.focus();if(el.select&&el.type!=='checkbox')try{el.select();}catch(e){}}}
-  updateTargetCount();renderToggleAll();
+  updateTargetCount();renderToggleAll();renderInitBonus();
 }
 function groupHTML(g){
   const up=g.enemies.filter(e=>e.hp>0).length, K=f=>`data-k="${g.id}-${f}"`;
@@ -557,7 +564,7 @@ function undoEdit(){
 }
 function redoEdit(){
   const s=redoStack.pop();if(!s)return;
-  swapIn(s,undoStack);toast(`Redid: ${s.what}`);
+  swapIn(s,undoStack);toast(`Redid: ${s.what}`);logEv('redo-edit',s.what);
 }
 function renderUndo(){
   const u=$('#undoEdit'),r=$('#redoEdit');if(!u)return;
@@ -581,7 +588,7 @@ function bindGroups(){
   box.addEventListener('input',ev=>{
     const t=ev.target,{g}=ctx(t);if(!g)return;
     const f=t.dataset.f;
-    if(f==='name'||f==='hp'||f==='bonus'){g[f]=t.value;save();}
+    if(f==='name'||f==='hp'||f==='bonus'){g[f]=t.value;save();if(f==='name')renderInitBonus();}
   });
   box.addEventListener('change',ev=>{
     const t=ev.target,{g,e}=ctx(t);if(!g)return;
@@ -592,6 +599,7 @@ function bindGroups(){
       else if(f==='cover')g.cover=num(t.value);
       else if(t.type==='checkbox')g[f]=t.checked;
       else g[f]=t.value;
+      if(f==='init')renderInitBonus();
       save();recompute();return;
     }
     if(t.dataset.save){g.saves[t.dataset.save]=num(t.value);save();recompute();return;}
@@ -844,12 +852,32 @@ function syncPendingInit(){
   if(!recs.length){state.pendingInit=null;setTimeout(()=>{renderResults();toast('No enemies ticked — stopped waiting for dice.');},0);return;}
   if(recs.every(r=>r.d20!=null))setTimeout(()=>{if(state.pendingInit===P&&P.recs.every(r=>r.d20!=null))finishInit(P);},0);
 }
-function initDice(d20s){
-  const P=state.pendingInit;
-  let used=0;
-  for(const v of d20s){const rec=P.recs.find(r=>r.d20==null);if(!rec)break;rec.d20=clamp(v,1,20);used++;}
+// A plain number in the roll ("9d20+3") is that roll's bonus for each die. Only d20s plus whole
+// numbers count; anything else ("9d20+1d4") is odd, so its extras are ignored and the GM is told.
+function rollFlat(formula){
+  const s=String(formula||'').replace(/\[[^\]]*\]/g,'').replace(/\s+/g,'').toLowerCase();
+  const m=/^\d*d20((?:[+-]\d+)+)$/.exec(s);
+  if(m)return {flat:m[1].match(/[+-]\d+/g).reduce((a,n)=>a+Number(n),0)};
+  return {flat:null,odd:s.includes('d20')&&!/^\d*d20$/.test(s)};
+}
+// Each die keeps the bonus of the roll it came from, so "4d20+3" then "5d20+2" both work. A roll's
+// number is used INSTEAD of the card's Initiative +, never on top, so +3 on both still gives +3.
+function initDice(d20s,formula){
+  const P=state.pendingInit,{flat,odd}=rollFlat(formula);
+  let used=0,replaced=0;
+  for(const v of d20s){
+    const rec=P.recs.find(r=>r.d20==null);if(!rec)break;
+    rec.d20=clamp(v,1,20);used++;
+    if(flat!=null){
+      rec.flat=flat;
+      const {g}=enemyOf(rec),card=g?num(g.init,0):0;
+      if(card&&card!==flat)replaced++;
+    }
+  }
   if(!used){toast('Got more d20s than enemies — extra dice ignored.');return;}
   if(used<d20s.length)toast(`Used ${used} of the ${d20s.length} d20s — the rest were extra.`);
+  else if(replaced)toast(`Used the ${sgn(flat)} from your roll instead of the card’s Initiative + for ${replaced} of them.`);
+  else if(odd)toast('Only the d20s from that roll were used, plus each card’s Initiative +.');
   if(P.recs.every(r=>r.d20!=null))finishInit(P);
   else{save();renderResults();}
 }
@@ -860,7 +888,7 @@ function finishInit(P){
   const before=JSON.stringify(state.lastInit||null);
   const rows=P.recs.map(rec=>{
     const {g,e}=enemyOf(rec);if(!e)return null;
-    return {gid:rec.gid,eid:rec.eid,name:label(g,e),tokenId:e.tokenId||null,d20:rec.d20!=null?rec.d20:rnd(20),bonus:num(g.init,0)};
+    return {gid:rec.gid,eid:rec.eid,name:label(g,e),tokenId:e.tokenId||null,d20:rec.d20!=null?rec.d20:rnd(20),bonus:rec.flat!=null?rec.flat:num(g.init,0),fromRoll:rec.flat!=null};
   }).filter(Boolean);
   rows.sort((a,b)=>initTotal(b)-initTotal(a));
   state.pendingInit=null;
@@ -907,8 +935,8 @@ function pushInitUndo(what,before,turn){
 async function swapInit(s,other){
   let back=[];
   if(s.turn&&s.turn.length){
-    try{const d=await r20Send(turnCmd(s.turn));back=d.prev||[];}
-    catch(err){(other===redoStack?undoStack:redoStack).push(s);renderUndo();toast(r20Problem(err));return;}
+    try{const d=await r20Send(turnCmd(s.turn));back=d.prev||[];logEv('turn-back',`${s.what}: sent ${s.turn.length} rows`);}
+    catch(err){(other===redoStack?undoStack:redoStack).push(s);renderUndo();logEv('turn-back-failed',`${s.what}: ${err&&err.message||err}`);toast(r20Problem(err));return;}
   }
   other.push({what:s.what,init:JSON.stringify(state.lastInit||null),turn:back});
   state.lastInit=JSON.parse(s.init);save();renderResults();renderUndo();
@@ -918,21 +946,41 @@ async function usePastedInit(){
   if(!dice.length){toast('No d20 numbers (1–20) found in that.');return;}
   if(!state.pendingInit){await freshThen(()=>startInit(true));if(!state.pendingInit)return;}
   logEv('pasted',dice.join(','));
-  onRoll20Roll({id:'paste:'+uid(),dice:dice.map(v=>({sides:20,value:v})),formula:'typed in'});
+  onRoll20Roll({id:'paste:'+uid(),dice:dice.map(v=>({sides:20,value:v})),formula:pastedFormula(inp.value)});
   inp.value='';
+}
+// One box per card, the same number as the card's Initiative + field.
+function renderInitBonus(){
+  const box=$('#initBonus');if(!box||box.contains(document.activeElement))return;
+  box.innerHTML=state.groups.map(g=>`<label><span class="nm">${esc(g.name||'Enemy group')}</span><span class="lbl">Initiative +</span><input type="number" data-ib="${g.id}" value="${num(g.init,0)||''}" placeholder="0" title="Added to each of this group's initiative rolls. Can be negative."></label>`).join('');
+}
+const copyBtn=cmd=>`<button class="small copycmd" data-copy="${esc(cmd)}" data-label="📋 Copy ${esc(cmd)}" title="Copies this, ready to paste into Roll20 chat">📋 Copy ${esc(cmd)}</button>`;
+async function copyCmd(b){
+  const text=b.dataset.copy;let ok=false;
+  try{await navigator.clipboard.writeText(text);ok=true;}
+  catch(e){
+    const t=document.createElement('textarea');
+    t.value=text;t.readOnly=true;t.style.cssText='position:fixed;opacity:0';
+    document.body.appendChild(t);t.select();
+    try{ok=document.execCommand('copy');}catch(e2){}
+    t.remove();
+  }
+  if(!ok){toast(`Couldn’t copy that. Type ${text} in Roll20 chat.`);return;}
+  b.textContent='✓ Copied';
+  setTimeout(()=>{if(b.isConnected)b.textContent=b.dataset.label;},1400);
 }
 function renderInit(){
   const P=state.pendingInit,L=state.lastInit,box=$('#initBox'),b=$('#initBtn');
   b.textContent=P?'⏹ Stop reading Roll20 rolls':state.rules.roll20?'⚡ Start initiative — then roll in Roll20':'⚡ Roll initiative';
   b.classList.toggle('stop',!!P);
   $('#initClear').hidden=!L||!!P;
-  $('#initHint').textContent=P?'':state.rules.roll20?'Select the tokens that are rolling in Roll20 first. Each rolls its own d20 + its card’s Initiative +, then goes on the Turn Order. Anyone already on it keeps their spot and number.':'Ticked enemies each roll their own d20 + their card’s Initiative +.';
+  $('#initHint').textContent=P?'':state.rules.roll20?'Select the tokens that are rolling in Roll20 first. Each rolls its own d20 + the Initiative + above, then goes on the Turn Order. Anyone already on it keeps their spot and number.':'Ticked enemies each roll their own d20 + their card’s Initiative +.';
   if(P){
     const got=P.recs.filter(r=>r.d20!=null).length,need=P.recs.length;
     const names=P.recs.map(r=>{const {g,e}=enemyOf(r);return e?`<span class="${r.d20!=null?'done':''}">${esc(label(g,e))}: ${r.d20!=null?r.d20:'…'}</span>`:'';}).join('');
     box.innerHTML=`<div class="waiting" style="margin-top:8px">
       <h3>📡 Waiting for your initiative dice</h3>
-      <div>In Roll20 type <b>/r ${need-got}d20</b>${got?` <span class="muted">(${got} already in)</span>`:''}. Only the single dice are used. You can also roll them a few at a time.</div>
+      <div>In Roll20 chat, roll ${copyBtn(`/r ${need-got}d20`)}${got?` <span class="muted">(${got} already in)</span>`:''}. The Initiative + above gets added to each one. If you type a bonus in the roll, like <b>/r ${need-got}d20+3</b>, that +3 goes on each one instead. You can also roll them a few at a time.</div>
       <div class="prog" style="margin-top:6px">${got} / ${need} d20s</div>
       <div class="wlist">${names}</div>
       <div class="row"><button class="small" data-iact="fill">Roll the rest here</button><button class="small danger" data-iact="cancel">Cancel</button></div>
@@ -940,7 +988,7 @@ function renderInit(){
     return;
   }
   if(!L){box.innerHTML='';return;}
-  const rows=L.rows.map((r,i)=>`<tr><td><b>${esc(enemyLabelById(r))}</b></td><td><input type="number" min="1" max="20" data-id20="${i}" value="${r.d20}"></td><td class="muted">${sgn(r.bonus)}</td><td><b>${initTotal(r)}</b></td></tr>`).join('');
+  const rows=L.rows.map((r,i)=>`<tr><td><b>${esc(enemyLabelById(r))}</b></td><td><input type="number" min="1" max="20" data-id20="${i}" value="${r.d20}"></td><td class="muted">${sgn(r.bonus)}${r.fromRoll?'<span class="tag">from your roll</span>':''}</td><td><b>${initTotal(r)}</b></td></tr>`).join('');
   const cls=L.sent==='fail'||L.sent==='blocked'?'blocked':L.sent||'';
   box.innerHTML=(L.sent?`<div class="syncline ${cls}" style="margin-top:8px"><span>${esc(L.text)}</span>${L.retry?' <button class="small" data-iact="retry">Add to Turn Order</button>':''}</div>`:'')+
     `<div class="tablewrap"><table class="res"><thead><tr><th>Enemy</th><th>d20</th><th>Bonus</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -969,7 +1017,15 @@ function bindInit(){
   $('#initClear').addEventListener('click',()=>{snapResults('clear initiative');state.lastInit=null;save();renderResults();toast('Initiative list cleared. Roll20’s Turn Order wasn’t changed.','Undo',undoEdit);});
   $('#initPasteBtn').addEventListener('click',usePastedInit);
   $('#initPaste').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();usePastedInit();}});
+  $('#initBonus').addEventListener('change',ev=>{
+    const id=ev.target.dataset.ib,g=id&&findG(id);if(!g)return;
+    g.init=ev.target.value;save();renderGroups();
+  });
+  document.addEventListener('click',ev=>{const b=ev.target.closest('[data-copy]');if(b)copyCmd(b);});
 }
+// A pasted Roll20 line keeps its formula ("rolling 9d20+3 ( ... )"), so it acts like the same roll
+// coming from chat. Numbers typed by hand have none.
+const pastedFormula=text=>{const m=/rolling\s+([^(=]+)/i.exec(String(text||''));return m?m[1].trim():'typed in';};
 // Dice typed or pasted by hand (e.g. Roll20 rolled before Start was pressed). Takes the numbers
 // inside "( ... )" when there are any — that's where Roll20 lists the single dice — ignoring
 // things like "4d20" and the "= 29" total.
@@ -985,7 +1041,7 @@ async function usePasted(){
   if(state.pendingInit){toast('Initiative is waiting for its dice — finish or stop that first.');return;}
   if(!state.pending){await freshThen(()=>doRoll(true));if(!state.pending)return;}
   logEv('pasted',dice.join(','));
-  onRoll20Roll({id:'paste:'+uid(),dice:dice.map(v=>({sides:20,value:v})),formula:'typed in'});
+  onRoll20Roll({id:'paste:'+uid(),dice:dice.map(v=>({sides:20,value:v})),formula:pastedFormula(inp.value)});
   inp.value='';
 }
 const seenRolls=new Map();
@@ -999,7 +1055,7 @@ function onRoll20Roll(roll){
   if(state.pendingInit){
     const d20s=roll.dice.filter(d=>d.sides===20).map(d=>d.value);
     logEv('roll20-dice',`init ${roll.formula}: ${d20s.join(' ')}`);
-    if(d20s.length)initDice(d20s);
+    if(d20s.length)initDice(d20s,roll.formula);
     return;
   }
   const P=state.pending;
@@ -1017,6 +1073,10 @@ function onRoll20Roll(roll){
   // Only the individual dice matter — Roll20's added-up total is ignored for saves.
   const d20s=roll.dice.filter(d=>d.sides===20).map(d=>d.value);
   logEv('roll20-dice',`${roll.formula}: ${roll.dice.map(d=>'d'+d.sides+'='+d.value+(d.dropped?'(dropped)':'')).join(' ')}`);
+  // Saves use the card's modifiers. A number in the roll is not added: it would count twice and
+  // could flip a pass and change HP.
+  const flat=d20s.length?rollFlat(roll.formula).flat:null;
+  const flatNote=flat?` The ${sgn(flat)} in your roll wasn’t added. Saves use each card’s modifiers.`:'';
   if(d20s.length){
     let used=0;
     for(const v of d20s){const rec=P.recs.find(r=>r.d20.length<r.need);if(!rec)break;rec.d20.push(clamp(v,1,20));used++;}
@@ -1030,8 +1090,8 @@ function onRoll20Roll(roll){
     slot.text=`from Roll20: ${roll.formula||''} [${kept.map(d=>d.value).join(', ')}]`;
   }
   save();
-  if(pendingDone(P)){startResult(P);toast('Got all the Roll20 dice — saves worked out.');}
-  else renderResults();
+  if(pendingDone(P)){startResult(P);toast('Got all the Roll20 dice — saves worked out.'+flatNote);}
+  else{renderResults();if(flatNote)toast(flatNote.trim());}
 }
 
 // ---------- Roll20 tokens (needs the Mass Save Link Mod script in the game) ----------
@@ -1315,10 +1375,10 @@ function renderResults(){
     const names=P.recs.map(r=>{const g=findG(r.gid),e=g&&g.enemies.find(x=>x.id===r.eid);if(!e)return '';
       return `<span class="${r.d20.length>=r.need?'done':''}">${esc(label(g,e))}${r.need===2?' (2 dice)':''}: ${r.d20.length?r.d20.join(' / '):'…'}</span>`;}).join('');
     const dmgLine=P.dmg&&P.dmg.some(p=>p.total==null||String(p.text).startsWith('from Roll20'))?
-      `<div style="margin-top:8px"><b>Damage:</b> ${P.dmg.map(p=>p.total==null?`waiting for <b>${esc(p.dice)}</b> ${esc(p.type)}`:`<span class="ok">${p.total} ${esc(p.type)}</span>`).join(' · ')}</div>`:'';
+      `<div style="margin-top:8px"><b>Damage:</b> ${P.dmg.map(p=>p.total==null?`waiting for ${copyBtn(`/r ${p.dice}`)} ${esc(p.type)}`:`<span class="ok">${p.total} ${esc(p.type)}</span>`).join(' · ')}</div>`:'';
     box.innerHTML=`<div class="waiting">
       <h3>📡 Waiting for your Roll20 dice — DC ${P.spell.dc} ${P.spell.ability.toUpperCase()} save</h3>
-      <div>In Roll20 type <b>/r ${need-got}d20</b>${got?` <span class="muted">(${got} already in)</span>`:''}${two?` <span class="muted">(${two} enem${two===1?'y has':'ies have'} advantage/disadvantage, so ${two===1?'it needs':'they need'} 2 dice)</span>`:''}. Only the single dice are used — Roll20's total doesn't matter. You can also roll them a few at a time.</div>
+      <div>${need>got?`In Roll20 chat, roll ${copyBtn(`/r ${need-got}d20`)}`:'All the d20s are in'}${got?` <span class="muted">(${got} already in)</span>`:''}${two?` <span class="muted">(${two} enem${two===1?'y has':'ies have'} advantage/disadvantage, so ${two===1?'it needs':'they need'} 2 dice)</span>`:''}. Only the single dice are used — Roll20's total doesn't matter. You can also roll them a few at a time.</div>
       <div class="prog" style="margin-top:6px">${got} / ${need} d20s</div>
       <div class="wlist">${names}</div>${dmgLine}
       <div class="row"><button class="small" data-pact="fill">Roll the rest here</button><button class="small danger" data-pact="cancel">Cancel</button></div>
