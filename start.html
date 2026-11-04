@@ -43,12 +43,21 @@ code{background:#181420;border:1px solid var(--line);border-radius:5px;padding:1
   <div class="card">
     <h2>How a mass save goes</h2>
     <ol>
-      <li>In Roll20, select the monster tokens caught in the spell.</li>
-      <li>In the roller click <b>⬇ Get selected tokens</b>. Type their save modifiers (once), the DC and the damage.</li>
+      <li>In the roller click <b>+ Add enemy group</b> and name it.</li>
+      <li>In Roll20, select that group's monster tokens. On the card click <b>⬇ Use selected Roll20 tokens</b>. Type their save modifiers (once), the DC and the damage.</li>
       <li>Click <b>Start</b>, then in Roll20 type <code>/r 8d20</code> (one d20 per monster).</li>
       <li>Done — passes and fails are worked out and the selected tokens' HP goes down in Roll20. Tokens you didn't select are never touched.</li>
     </ol>
     <p class="muted">Tokens you made from your own images work too — if their HP bar is empty, the roller fills it in with “HP each”.</p>
+  </div>
+
+  <div class="card">
+    <h2>Rolling initiative for all of them</h2>
+    <ol>
+      <li>Type each card's <b>Initiative +</b> and tick the enemies that are rolling.</li>
+      <li>Click <b>⚡ Start initiative</b>, then in Roll20 type <code>/r 8d20</code> (one d20 per monster).</li>
+      <li>Done — each token goes on Roll20's Turn Order with its own number. Anyone already on it keeps their spot and number. Selecting tokens isn't needed for this.</li>
+    </ol>
   </div>
 </main>
 </body>

@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.0.8';
+  const VERSION = '2.1.0';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -69,16 +69,65 @@
     m.save({ statusmarkers: list.join(',') });
   }
 
+  // ---------- Turn Order ----------
+  function readTurnOrder() {
+    try { const a = JSON.parse(Campaign.get('turnorder') || '[]'); return Array.isArray(a) ? a : []; }
+    catch (e) { return []; }
+  }
+  const prNum = t => { const n = parseFloat(t.pr); return isNaN(n) ? -Infinity : n; };
+  // Puts a new row where its number belongs and leaves every other row where it is. A list in
+  // high-to-low order is simply filled in. A list that isn't (the fight is under way and Roll20 has
+  // rotated it) is walked from its highest number, and whoever's turn it is stays on top.
+  function insertTurn(list, row) {
+    const nums = list.map(prNum);
+    const inOrder = nums.every((n, i) => !i || nums[i - 1] >= n);
+    const head = inOrder ? 0 : nums.indexOf(Math.max(...nums));
+    const active = list[0];
+    const walk = list.slice(head).concat(list.slice(0, head));
+    let at = walk.findIndex(t => prNum(t) < prNum(row));
+    if (at < 0) at = walk.length;
+    walk.splice(at, 0, row);
+    if (inOrder) return walk;
+    const a = walk.indexOf(active);
+    return walk.slice(a).concat(walk.slice(0, a));
+  }
+  // Each pair is "key:number" (add or re-number) or "key:x" (take off). The key is a token id, or
+  // "~name" for an enemy with no token. A token already on the list never gets a second row. Answers
+  // with what each key had before, which is what Undo sends back.
+  function setTurnOrder(pairs, open) {
+    const page = Campaign.activePage(), graphics = page.thegraphics;
+    let list = readTurnOrder();
+    const prev = [], missing = [];
+    let added = 0, changed = 0;
+    pairs.forEach(p => {
+      const custom = p.id[0] === '~' ? decodeURIComponent(p.id.slice(1)) : null;
+      const same = t => custom != null ? String(t.id) === '-1' && t.custom === custom : t.id === p.id;
+      const had = list.find(same);
+      const value = decodeURIComponent(p.raw);
+      if (value !== 'x' && custom == null && !graphics.get(p.id)) { missing.push(p.id); return; }   // not on this map
+      prev.push({ key: p.id, pr: had ? String(had.pr) : 'x' });
+      list = list.filter(t => t !== had);
+      if (value === 'x') return;
+      had ? changed++ : added++;
+      list = insertTurn(list, had ? Object.assign({}, had, { pr: value })
+        : { id: custom != null ? '-1' : p.id, pr: value, custom: custom != null ? custom : '', _pageid: page.id });
+    });
+    Campaign.save({ turnorder: JSON.stringify(list) });
+    const w = Campaign.initiativewindow;
+    if (open && w && !w.isOpen) w.toggleWindow();
+    return { added, changed, missing, prev };
+  }
+
   // Same command language the website already speaks: "!msr-<cmd> <req> opt=val id:number ..."
   function runCommand(text) {
     const parts = String(text).trim().split(/\s+/), cmd = parts[0], req = parts[1] || '';
     const opts = {}, pairs = [];
     parts.slice(2).forEach(p => {
-      const eq = /^(bar|dead|tbar|empty0)=(\w+)$/.exec(p);
+      const eq = /^(bar|dead|tbar|empty0|open)=(\w+)$/.exec(p);
       if (eq) { opts[eq[1]] = eq[2]; return; }
       const i = p.lastIndexOf(':');
       // "id:number" or, for !msr-init, "id:hp~max"
-      if (i > 0) { const v = p.slice(i + 1).split('~'); pairs.push({ id: p.slice(0, i), n: parseInt(v[0], 10) || 0, m: v[1] != null ? parseInt(v[1], 10) : null }); }
+      if (i > 0) { const v = p.slice(i + 1).split('~'); pairs.push({ id: p.slice(0, i), raw: p.slice(i + 1), n: parseInt(v[0], 10) || 0, m: v[1] != null ? parseInt(v[1], 10) : null }); }
     });
     const bar = /^[123]$/.test(opts.bar) ? opts.bar : '1';
     const tbar = /^[123]$/.test(opts.tbar) && opts.tbar !== bar ? opts.tbar : null;   // optional temp HP bar
@@ -99,6 +148,9 @@
       reply('GET', { tokens, missing });
       return;
     }
+
+    // Turn Order only: no token's HP or anything else on the token is touched.
+    if (cmd === '!msr-turn') { reply('TURN', setTurnOrder(pairs, opts.open === '1')); return; }
 
     const sel = selectedGraphics();
     const selById = new Map(sel.map(m => [m.id, m]));
