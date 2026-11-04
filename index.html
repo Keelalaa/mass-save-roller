@@ -249,7 +249,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
   <section>
     <div class="panel">
       <h2>Enemies <span class="sp"></span><button id="undoEdit" class="small" disabled>↩ Undo</button><button id="redoEdit" class="small" disabled>↪ Redo</button><button id="toggleAll" class="small" title="Minimize or expand every card">Minimize all</button><button id="addGroup" class="primary small">+ Add enemy group</button></h2>
-      <div class="hint">Each group is one kind of monster (e.g. 6 Goblins). Tick the enemies caught in the spell. Click a damage type to cycle: <span class="chip resist">resistant</span> <span class="chip immune">immune</span> <span class="chip vuln">vulnerable</span>.</div>
+      <div class="hint">Each group is one kind of monster (e.g. 6 Goblins). Select the tokens caught in the spell in Roll20 and their rows tick by themselves, or tick rows by hand. Click a damage type to cycle: <span class="chip resist">resistant</span> <span class="chip immune">immune</span> <span class="chip vuln">vulnerable</span>.</div>
       <div id="groups"></div>
     </div>
   </section>
@@ -259,7 +259,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.7.0';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.8.0';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -594,7 +594,7 @@ function groupHTML(g){
     const lr=g.lr>0?`<span class="lr" title="Legendary Resistance left">${'◆'.repeat(e.lrLeft)}${'◇'.repeat(Math.max(0,g.lr-e.lrLeft))}</span>`:'';
     return `<div class="enemy${e.hp<=0?' dead':''}" data-eid="${e.id}">
       <span class="ehandle" title="Drag onto another card — or below the cards for its own card">⠿</span>
-      <input type="checkbox" data-e="target" ${K(e.id+'t')} ${e.target?'checked':''} title="Ticked enemies are the ones that roll">
+      <input type="checkbox" data-e="target" ${K(e.id+'t')} ${e.target?'checked':''} title="Ticked enemies are the ones that roll. When linked, this follows what's selected in Roll20. You can still change it by hand.">
       <div><div class="nm">${e.hp<=0?'💀 ':''}${e.tokenId?`<span title="${e.noBar?'Roll20 token (no HP on its bar — not updated)':'Linked to a Roll20 token'}">${e.noBar?'⛓️‍💥':'🔗'}</span> `:''}${esc(label(g,e))} ${lr}${e.gone?'<span class="warn" title="This token isn’t on the map you’re looking at in Roll20. It may be on another map, or it was deleted. Roll20 won’t be updated for it from this map."> ⚠️ not on this map</span>':''}${(e.markers||[]).map(x=>`<span title="${esc(markName(x.split('@')[0]))} in Roll20">${markIcon(x.split('@')[0])}</span>`).join('')}</div><div class="bar ${cls}"><i style="width:${pct}%"></i></div></div>
       <div class="ectl">
         <input type="number" data-e="hp" ${K(e.id+'h')} value="${e.hp}" title="Current HP"><span class="muted">/</span>
@@ -920,14 +920,17 @@ function doRoll(forceWait){
       bonusF:g.bonus,bonus:g.bonus.trim()?rollDice(g.bonus):null,
       dmg:perTarget?parts.map(p=>({type:p.type,dice:p.dice,...rollDice(p.dice)})):null,lrUsed:false});
   }
-  if(!recs.length){toast('Tick at least one enemy that is still standing.');return;}
+  if(!recs.length){toast(ext.direct&&tokenEnemies().length?(lastSel.length?'Those tokens aren’t on a card yet, or are at 0 HP. Use ⬇ Add selected Roll20 tokens first.':'Select the tokens caught in it in Roll20 first, then click this again.'):'Tick at least one enemy that is still standing.');return;}
   const spell=JSON.parse(JSON.stringify(sp));spell.perTarget=perTarget;
   const dmg=perTarget?null:parts.map(p=>r20Dmg?{type:p.type,dice:p.dice,total:null,text:''}:{type:p.type,dice:p.dice,...rollDice(p.dice)});
   logEv('roll-start',`roll20=${r20} targets=${recs.length} dc=${spell.dc} ${spell.ability} onPass=${spell.onSuccess} dmg=${parts.map(p=>p.dice+(p.type?' '+p.type:'')).join('+')||'none'} tokens=${recs.filter(r=>{const g=findG(r.gid);const e=g&&g.enemies.find(x=>x.id===r.eid);return e&&e.tokenId;}).length}`);
   if(r20){
     state.pending={id:uid(),spell,dmg,recs};save();renderResults();
     $('#results').scrollIntoView({behavior:'smooth',block:'start'});
-    if(ext.state!=='ok'&&forceWait!==true)toast('Not linked to Roll20 — click the ⚔️ Mass Save bookmark in Roll20, or paste your dice in the box under Start.');
+    const onCards=new Set(state.groups.flatMap(g=>g.enemies.map(e=>e.tokenId)));
+    const off=ext.direct?lastSel.filter(id=>!onCards.has(id)).length:0;
+    if(off)toast(`${off} selected token${off===1?' isn’t':'s aren’t'} on a card, so ${off===1?'it isn’t':'they aren’t'} rolling. Use ⬇ Add selected Roll20 tokens to add ${off===1?'it':'them'}.`);
+    else if(ext.state!=='ok'&&forceWait!==true)toast('Not linked to Roll20 — click the ⚔️ Mass Save bookmark in Roll20, or paste your dice in the box under Start.');
     return;
   }
   startResult({id:uid(),spell,dmg,recs});
@@ -982,7 +985,35 @@ setInterval(()=>{
   }
   if(open&&(!pingSentAt||pongAt>=pingSentAt||noAnswer)){pingSentAt=now;linkPost({type:'ping'});}
   if(ext.direct&&now-refreshedAt>=3500)refreshTokens('live');
+  if(ext.direct&&!state.pending&&!state.pendingInit)readSelection(false);
 },2000);
+// When linked, a token row's tick follows what's selected in Roll20. Only a new selection changes
+// ticks, so a tick changed by hand stays until the selection changes. Clicking away (nothing selected)
+// leaves them alone until Start, because a save can't change a token that isn't selected. Rows with no
+// token keep their ticks. Nothing changes while a roll is waiting for its dice.
+let selSeen=null,selBusy=false,lastSel=[];
+function applySelection(ids,atStart){
+  if(state.pending&&!atStart)return;
+  const key=[...ids].sort().join(',');
+  if(key===selSeen&&(key||!atStart))return;
+  selSeen=key;
+  if(!key&&(!atStart||!state.rules.r20Hp))return;
+  let changed=false;
+  state.groups.forEach(g=>g.enemies.forEach(e=>{
+    if(!e.tokenId)return;
+    const on=ids.includes(e.tokenId);if(!!e.target===on)return;
+    e.target=on;changed=true;
+    const box=document.querySelector(`[data-eid="${e.id}"] [data-e=target]`);if(box)box.checked=on;
+  }));
+  if(changed){save();updateTargetCount();}
+}
+async function readSelection(atStart){
+  if(selBusy&&!atStart)return;
+  selBusy=true;
+  try{const d=await r20Send(`!msr-sel {req} bar=${state.rules.r20Bar}`);lastSel=(d.tokens||[]).map(t=>t.id);applySelection(lastSel,atStart);}
+  catch(e){/* the link status shows any problem */}
+  finally{selBusy=false;}
+}
 window.addEventListener('message',ev=>{
   const d=ev.data;if(!d)return;
   const fromRoll20=d.source==='msr-ext2'&&ev.origin===ROLL20_ORIGIN&&ev.source===window.opener;
@@ -1331,7 +1362,7 @@ function onRoll20Roll(roll){
     if(roll.dice.some(d=>d.sides===20)&&state.rules.roll20){
       const again=()=>onRoll20Roll(Object.assign({},roll,{id:roll.id+':again'}));
       toast(`Got your Roll20 dice (${roll.formula||'d20s'}), but nothing was waiting for them.`,
-        'Use for saves',()=>{doRoll();if(state.pending)again();},
+        'Use for saves',async()=>{await freshThen(()=>doRoll());if(state.pending)again();},
         'Use for initiative',async()=>{await startInit(true);if(state.pendingInit)again();});
     }
     return;
@@ -1588,7 +1619,7 @@ function refreshTokens(why){
 }
 // Re-read first (max 2.5 s), then start — so a save always works from Roll20's real HP.
 async function freshThen(fn){
-  if(ext.direct&&tokenEnemies().length)await Promise.race([refreshTokens('before save'),new Promise(r=>setTimeout(r,2500))]);
+  if(ext.direct&&tokenEnemies().length)await Promise.race([Promise.all([refreshTokens('before save'),readSelection(true)]),new Promise(r=>setTimeout(r,2500))]);
   return fn();
 }
 window.addEventListener('focus',()=>{if(Date.now()-refreshedAt>5000)refreshTokens('window focus');});
