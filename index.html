@@ -263,7 +263,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.9.1';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.9.2';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -629,10 +629,6 @@ function groupHTML(g){
         <label><span class="lbl">Initiative +</span><input data-f="init" ${K('init')} type="number" value="${num(g.init,0)||''}" style="width:64px" placeholder="0" title="Added to each of this group's initiative rolls. Can be negative."></label>
         <button class="small" data-act="resethp" title="Give every enemy in this group fresh HP">Reset all HP</button>
       </div>
-      <div class="row tierow">
-        <label><span class="lbl">Tie breaker</span><select data-f="tie" ${K('tie')} title="${TIE_TIP}">${tieOptions(g)}</select></label>
-        ${g.tie==='dex'?`<label><span class="lbl">DEX score</span><input data-f="dexScore" ${K('dexScore')} type="number" min="1" max="99" value="${esc(g.dexScore||'')}" style="width:64px" placeholder="14" title="${DEX_TIP}"></label>`:''}
-      </div>
       <div class="lbl">Saving throw modifiers</div>
       <div class="saves">${saves}</div>
       <div class="opts">
@@ -796,8 +792,7 @@ function bindGroups(){
       else if(f==='cover')g.cover=num(t.value);
       else if(t.type==='checkbox')g[f]=t.checked;
       else g[f]=t.value;
-      if(f==='init'||f==='dexScore')renderInitBonus();
-      if(f==='tie'){save();renderGroups();return;}   // shows or hides the DEX score box
+      if(f==='init')renderInitBonus();
       save();recompute();return;
     }
     if(t.dataset.save){g.saves[t.dataset.save]=num(t.value);save();recompute();return;}
