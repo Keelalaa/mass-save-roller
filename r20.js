@@ -1,9 +1,9 @@
 // Mass Save Roller — Roll20 link. Loaded by the "⚔️ Mass Save" bookmark inside a Roll20 game.
 // It opens (or re-links) the website window, sends the GM's NEW dice rolls to it, and changes the
-// HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
+// HP of tokens on the GM's command. Safety rule: rolls only ever change tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.2.0';
+  const VERSION = '2.3.0';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -129,7 +129,7 @@
     const parts = String(text).trim().split(/\s+/), cmd = parts[0], req = parts[1] || '';
     const opts = {}, pairs = [];
     parts.slice(2).forEach(p => {
-      const eq = /^(bar|dead|tbar|empty0|open|sel|m)=([\w%.-]+)$/.exec(p);
+      const eq = /^(bar|dead|tbar|empty0|open|sel|m|any)=([\w%.-]+)$/.exec(p);
       if (eq) { opts[eq[1]] = eq[2]; return; }
       const i = p.lastIndexOf(':');
       // "id:number" or, for !msr-init, "id:hp~max"
@@ -223,8 +223,10 @@
     if (cmd === '!msr-dmg' || cmd === '!msr-init') {
       const results = [], notSelected = [];
       pairs.forEach(p => {
-        const m = selById.get(p.id);
-        if (!m) { notSelected.push(p.id); return; }           // never touch unselected tokens
+        // any=1 is a change the GM made by hand on this token's own row. Rolls never send it, so a
+        // roll can't touch a token that isn't selected.
+        const m = selById.get(p.id) || (opts.any === '1' ? Campaign.activePage().thegraphics.get(p.id) : null);
+        if (!m) { notSelected.push(p.id); return; }
         const b = readBar(m, bar);
         if (cmd === '!msr-init') {
           const max = Math.max(0, p.m != null && !isNaN(p.m) ? p.m : p.n, p.n);

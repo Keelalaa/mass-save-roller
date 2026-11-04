@@ -259,7 +259,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.6.0';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.7.0';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -599,7 +599,7 @@ function groupHTML(g){
       <div class="ectl">
         <input type="number" data-e="hp" ${K(e.id+'h')} value="${e.hp}" title="Current HP"><span class="muted">/</span>
         <input type="number" data-e="max" ${K(e.id+'m')} value="${e.max}" title="Max HP">
-        <input type="number" data-e="temp" ${K(e.id+'x')} value="${e.temp||''}" title="Temporary HP (optional) — soaks damage before real HP. Only kept on this page, not in Roll20." placeholder="temp HP" style="width:64px">
+        <input type="number" data-e="temp" ${K(e.id+'x')} value="${e.temp||''}" title="Temporary HP (optional): soaks damage before real HP. Stays in step with Roll20 if a temp HP bar is set." placeholder="temp HP" style="width:64px">
         <input type="number" data-e="amt" ${K(e.id+'a')} placeholder="amount" title="Type an amount, then − to damage or + to heal" style="width:64px">
         <button class="small" data-act="hurt" title="Deal damage">−</button><button class="small" data-act="heal" title="Heal">+</button>
         ${g.enemies.length>1?`<button class="small" data-act="split" title="Give this enemy its own card (for different modifiers)">⇱</button>`:''}
@@ -712,6 +712,7 @@ function restoreGroups(json){
     // what Roll20 has now stays the starting point, so only the difference is sent
     e.synced=c.synced;e.syncedTemp=c.syncedTemp;e.blocked=c.blocked;e.needInit=c.needInit;
     if(e.max!==c.max&&e.synced!=null){e.needInit=true;}   // e.g. undoing "Reset all HP": put max back too
+    e.direct=e.needInit||(e.synced!=null&&e.hp!==e.synced)||(e.syncedTemp!=null&&(e.temp||0)!==e.syncedTemp);   // undoing a hand edit is a hand edit
   }));
   state.groups=gs;
 }
@@ -798,6 +799,9 @@ function bindGroups(){
       if(k==='amt')return;
       e[k]=Math.max(0,num(t.value));
       if(k==='max'&&e.hp>e.max)e.hp=e.max;
+      // Typed on this exact row, so it goes to Roll20 without selecting the token. Only rolls need that.
+      e.direct=true;
+      if(k==='max'&&e.tokenId&&e.synced!=null)e.needInit=true;
       lockLast();save();renderGroups();
     }
   });
@@ -816,14 +820,15 @@ function bindGroups(){
       snap(`${a==='heal'?'heal':'damage'} ${amt} on ${label(g,e)}`);
       if(a==='heal')e.hp=Math.min(e.max,e.hp+amt);
       else{const ab=Math.min(e.temp,amt);e.temp-=ab;e.hp=Math.max(0,e.hp-(amt-ab));}
+      e.direct=true;
       lockLast();save();renderGroups();return;
     }
     const what={delgroup:`delete ${g.name}`,dup:`duplicate ${g.name}`,resethp:`Reset all HP on ${g.name}`,fullheal:`Full heal on ${g.name}`,resetlr:`Reset Legendary Res. on ${g.name}`,cleardead:`Remove defeated from ${g.name}`,all:`Target all in ${g.name}`,none:`Target none in ${g.name}`}[a];
     if(what&&a!=='delgroup')snap(what);
     if(a==='delgroup'){if(!armed(b,'Delete?'))return;snap(what);state.groups=state.groups.filter(x=>x!==g);lockLast();}
     else if(a==='dup'){const c=JSON.parse(JSON.stringify(g));c.id=uid();c.name=g.name+' (copy)';c.enemies=[];setCount(c,g.count);state.groups.splice(state.groups.indexOf(g)+1,0,c);}
-    else if(a==='resethp'){g.enemies.forEach(x=>{x.hp=x.max=rollHp(g.hp);x.temp=Math.max(0,num(g.tempEach,0));if(x.tokenId){x.needInit=true;x.synced=null;x.blocked=false;}});lockLast();}
-    else if(a==='fullheal'){g.enemies.forEach(x=>{x.hp=x.max;});lockLast();}
+    else if(a==='resethp'){g.enemies.forEach(x=>{x.hp=x.max=rollHp(g.hp);x.temp=Math.max(0,num(g.tempEach,0));if(x.tokenId){x.needInit=true;x.synced=null;x.blocked=false;x.direct=true;}});lockLast();}
+    else if(a==='fullheal'){g.enemies.forEach(x=>{x.hp=x.max;x.direct=true;});lockLast();}
     else if(a==='resetlr'){g.enemies.forEach(x=>x.lrLeft=g.lr);lockLast();}
     else if(a==='cleardead'){g.enemies=g.enemies.filter(x=>x.hp>0);g.count=g.enemies.length;lockLast();}
     else if(a==='all')g.enemies.forEach(x=>x.target=x.hp>0);
@@ -1473,10 +1478,13 @@ async function runSync(retry){
   if(inits.length){
     sync.busy=true;sync.state='sending';sync.text=`Setting HP on ${inits.length} token${inits.length===1?'':'s'} in Roll20…`;renderSync();
     try{
-      const d=await r20Send(`!msr-init {req} bar=${state.rules.r20Bar} `+inits.map(({e})=>`${e.tokenId}:${e.hp}~${Math.max(e.max,e.hp)}`).join(' '));
-      const refused=new Set(d.notSelected||[]);
-      inits.forEach(({e})=>{if(refused.has(e.tokenId))e.blocked=true;else{e.needInit=false;e.synced=e.hp;e.blocked=false;}});
-      logEv('init',`set ${inits.length-refused.size}, refused ${refused.size}`);
+      for(const any of [true,false]){
+        const part=inits.filter(({e})=>!!e.direct===any);if(!part.length)continue;
+        const d=await r20Send(`!msr-init {req} bar=${state.rules.r20Bar} ${any?'any=1 ':''}`+part.map(({e})=>`${e.tokenId}:${e.hp}~${Math.max(e.max,e.hp)}`).join(' '));
+        const refused=new Set(d.notSelected||[]);
+        part.forEach(({e})=>{if(refused.has(e.tokenId))e.blocked=true;else{e.needInit=false;e.synced=e.hp;e.blocked=false;}});
+        logEv('init',`set ${part.length-refused.size}, refused ${refused.size}${any?' (by hand)':''}`);
+      }
     }catch(err){sync.busy=false;sync.state='fail';sync.text='❌ '+r20Problem(err);save();renderSync();return;}
     sync.busy=false;
   }
@@ -1486,7 +1494,15 @@ async function runSync(retry){
   const tlist=tbar?tokenEnemies().filter(({e})=>e.syncedTemp!=null&&(e.temp||0)!==e.syncedTemp&&(retry||!e.blocked)):[];
   const stillBlocked=tokenEnemies().filter(({e})=>e.blocked).length;
   const nothing=!list.length&&!tlist.length;
-  if(nothing&&stillBlocked){sync.state='blocked';sync.text=`Not selected in Roll20, so NOT changed: ${tokenEnemies().filter(({e})=>e.blocked).map(({e})=>enemyLabel(e)).join(', ')}. Select ${stillBlocked===1?'it':'them'} and press Retry.`;save();renderSync();return;}
+  // A hand edit stays "by hand" only until Roll20 has it, so a later roll still needs the token selected.
+  const settleDirect=()=>tokenEnemies().forEach(({e})=>{if(e.direct&&!e.needInit&&!e.blocked&&e.synced===e.hp&&(!tbar||e.syncedTemp==null||(e.temp||0)===e.syncedTemp))e.direct=false;});
+  const refusedText=l=>{
+    const off=l.filter(e=>!e.direct),gone=l.filter(e=>e.direct);
+    return (off.length?`Not selected in Roll20, so NOT changed: ${off.map(enemyLabel).join(', ')}. Select ${off.length===1?'it':'them'} and press Retry. `:'')
+      +(gone.length?`Not on the map you’re looking at, so NOT changed: ${gone.map(enemyLabel).join(', ')}. Go to that map and press Retry.`:'');
+  };
+  if(nothing)settleDirect();
+  if(nothing&&stillBlocked){sync.state='blocked';sync.text=refusedText(tokenEnemies().filter(({e})=>e.blocked).map(({e})=>e));save();renderSync();return;}
   if(nothing&&inits.length){sync.state='ok';sync.text=`✅ Set HP on ${inits.length} token${inits.length===1?'':'s'} in Roll20.`;save();renderSync();return;}
   if(nothing){if(retry){sync.state='ok';sync.text='Roll20 tokens are up to date.';renderSync();}return;}
   const count=new Set([...list,...tlist].map(x=>x.e)).size;
@@ -1504,12 +1520,18 @@ async function runSync(retry){
     }finally{sent.forEach(x=>inflight.delete(x.e.tokenId+what));}
   };
   try{
-    await apply(list,state.rules.r20Bar,`dead=${state.rules.r20Dead?1:0}`,e=>e.hp,e=>e.synced,(e,v)=>{e.synced=v;},'hp');
-    await apply(tlist,tbar,'dead=0 empty0=1',e=>e.temp||0,e=>e.syncedTemp,(e,v)=>{e.syncedTemp=v;},'temp');
+    const hand=l=>l.filter(({e})=>e.direct),rolled=l=>l.filter(({e})=>!e.direct);
+    const hpArgs=[state.rules.r20Bar,`dead=${state.rules.r20Dead?1:0}`,e=>e.hp,e=>e.synced,(e,v)=>{e.synced=v;},'hp'];
+    const tempArgs=[tbar,'dead=0 empty0=1',e=>e.temp||0,e=>e.syncedTemp,(e,v)=>{e.syncedTemp=v;},'temp'];
+    for(const [items,a] of [[list,hpArgs],[tlist,tempArgs]]){
+      await apply(hand(items),a[0],a[1]+' any=1',a[2],a[3],a[4],a[5]);
+      await apply(rolled(items),a[0],a[1],a[2],a[3],a[4],a[5]);
+    }
     ext.script='ok';
     ok.forEach(e=>{if(!blocked.has(e))e.blocked=false;});
+    settleDirect();
     const good=[...ok].filter(e=>!blocked.has(e)).length;
-    if(blocked.size){const names=[...blocked].map(enemyLabel).join(', ');sync.state='blocked';sync.text=`${good?`Updated ${good} in Roll20. `:''}Not selected in Roll20, so NOT changed: ${names}. Select ${blocked.size===1?'it':'them'} and press Retry.`;}
+    if(blocked.size){sync.state='blocked';sync.text=`${good?`Updated ${good} in Roll20. `:''}${refusedText([...blocked])}`;}
     else{sync.state='ok';sync.text=`✅ Updated ${good} token${good===1?'':'s'} in Roll20.`;}
   }catch(err){sync.state='fail';sync.text='❌ '+r20Problem(err);}
   sync.busy=false;save();renderSync();
@@ -1533,7 +1555,7 @@ function applyRoll20Values(t){
     if(t.hp!=null&&!e.needInit&&e.synced!=null&&!inflight.has(t.id+'hp')&&t.hp!==e.synced){
       const unsent=e.synced-e.hp;e.synced=t.hp;e.hp=Math.max(0,t.hp-unsent);hpChanged=true;
     }
-    if(t.max>0&&t.max!==e.max){e.max=t.max;named=true;}
+    if(t.max>0&&t.max!==e.max&&!e.needInit){e.max=t.max;named=true;}
     // First read after picking a bar (or for tokens picked up before a bar was set): just take Roll20's value.
     if(t.hp!=null&&e.synced==null&&!e.needInit){e.hp=Math.max(0,t.hp);e.synced=t.hp;named=true;}
     if(tb&&t.temp!=null&&e.syncedTemp==null){e.temp=Math.max(0,t.temp);e.syncedTemp=t.temp;named=true;}
@@ -1640,6 +1662,7 @@ function recompute(){
   for(const rec of L.recs){
     const r=evalRec(rec,L);rec.out=null;if(!r)continue;
     const {e}=r,b=rec.before;
+    e.direct=false;   // a roll's changes always need the token selected
     const ab=Math.min(b.temp,r.dmg);
     e.temp=b.temp-ab;e.hp=Math.max(0,b.hp-(r.dmg-ab));e.lrLeft=b.lrLeft-(r.lrSpent?1:0);
     rec.out={pass:r.pass,dmg:r.dmg,down:b.hp>0&&e.hp<=0};
@@ -1654,7 +1677,7 @@ function recompute(){
 }
 function undo(){
   const L=state.last;if(!L)return;
-  for(const rec of L.recs){const g=findG(rec.gid),e=g&&g.enemies.find(x=>x.id===rec.eid);if(e){e.hp=rec.before.hp;e.temp=rec.before.temp;e.lrLeft=rec.before.lrLeft;}}
+  for(const rec of L.recs){const g=findG(rec.gid),e=g&&g.enemies.find(x=>x.id===rec.eid);if(e){e.hp=rec.before.hp;e.temp=rec.before.temp;e.lrLeft=rec.before.lrLeft;e.direct=false;}}
   takeMarksOff(L);
   state.log=state.log.filter(x=>x.id!==L.id);state.last=null;state.redo=L;save();renderGroups();renderResults();toast('Roll undone — HP restored. Changed your mind? Press Redo.');
 }
