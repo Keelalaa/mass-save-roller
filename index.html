@@ -174,8 +174,8 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
         <div id="r20Status" class="hint"></div>
         <details class="hint"><summary>How to link Roll20 (get the bookmark)</summary>
           <ol>
-            <li>Drag this button onto your bookmarks bar (Ctrl+Shift+B shows the bar): <a class="bmlink" href="javascript:(async()=>{window.__msrWin=window.open('https://mass-save-roller.vercel.app/?r20=1','massSaveRoller','popup,width=600,height=900');const t=await (await fetch('https://mass-save-roller.vercel.app/r20.js?'+Date.now())).text();(0,eval)(t)})()" onclick="event.preventDefault();this.textContent='Drag me to the bookmarks bar ↑'">⚔️ Mass Save</a></li>
-            <li>In your Roll20 game, click the bookmark. This window opens linked to Roll20.</li>
+            <li>Drag this button onto your bookmarks bar (Ctrl+Shift+B shows the bar): <a class="bmlink" href="javascript:(async()=>{window.__msrWin=window.open('https://mass-save-roller.vercel.app/?r20=1','massSaveRollerTab');const t=await (await fetch('https://mass-save-roller.vercel.app/r20.js?'+Date.now())).text();(0,eval)(t)})()" onclick="event.preventDefault();this.textContent='Drag me to the bookmarks bar ↑'">⚔️ Mass Save</a></li>
+            <li>In your Roll20 game, click the bookmark. This page opens in a new tab, linked to Roll20.</li>
             <li>Click it again whenever you reload Roll20.</li>
           </ol>
         </details>
@@ -228,7 +228,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.3';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.4';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -759,7 +759,7 @@ function startResult(R){
 // ---------- Roll20 link ----------
 const ext={state:'checking',roll20Open:false,version:null,script:'unknown'};
 let pingTimer=null;
-// Two ways to reach Roll20: the "⚔️ Mass Save" bookmark (this page is then a window opened by the
+// Two ways to reach Roll20: the "⚔️ Mass Save" bookmark (this page is then a tab opened by the
 // Roll20 tab, reached through window.opener) or the older Chrome add-on (same window).
 // Messages to/from the bookmark link are tagged "msr-page2"/"msr-ext2": copies of the link from
 // before v2.0.4 only answer the old tags, so a stale copy still running in Roll20 can never
@@ -916,6 +916,7 @@ async function sendTurn(rows,what,before){
     delete L.retry;
     L.sent=gone.length||off.length?'blocked':'ok';
     L.text=(did?`✅ Roll20 Turn Order: ${d.added?`added ${d.added}`:''}${d.added&&d.changed?', ':''}${d.changed?`new number for ${d.changed} already on it`:''}. `:'')
+      +(did&&(d.count||rows.length)>5?`Roll20’s Turn Order window only shows about 5 rows, so scroll it to see all ${d.count||rows.length}. `:'')
       +(gone.length?`Not on the map you’re looking at, so NOT added: ${nameList(gone)}. `:'')
       +(off.length?`Not selected in Roll20, so NOT added: ${nameList(off)}. Select ${off.length===1?'it':'them'} and press the button.`:'');
     // Nothing went through: the next try still counts as this same step for Undo.

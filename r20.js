@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.1.2';
+  const VERSION = '2.1.3';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -121,7 +121,7 @@
     Campaign.save({ turnorder: JSON.stringify(list) });
     const w = Campaign.initiativewindow;
     if (open && w && !w.isOpen) w.toggleWindow();
-    return { added, changed, missing, notSelected, prev };
+    return { added, changed, missing, notSelected, prev, count: list.length };
   }
 
   // Same command language the website already speaks: "!msr-<cmd> <req> opt=val id:number ..."
@@ -268,6 +268,9 @@
         rolls.forEach((r, i) => send({ type: 'roll', roll: Object.assign({ id: (msg.getAttribute('data-messageid') || '') + ':' + i, at: Date.now() }, r) }));
         continue;
       }
+      // 3D dice stop tumbling while this tab is in the background (the roller is often the tab in
+      // front), so the wait only counts while Roll20 is showing. Otherwise that roll would be lost.
+      if (document.hidden) { firstSeen.set(msg, Date.now()); continue; }
       const age = Date.now() - firstSeen.get(msg);
       if (age > 12000) {
         done.add(msg);
@@ -335,13 +338,13 @@
 
   function relink(w) {
     if (w && !w.closed) win = w;
-    if (!win || win.closed) win = window.open(SITE + '/?r20=1', 'massSaveRoller', 'popup,width=600,height=900');
+    if (!win || win.closed) win = window.open(SITE + '/?r20=1', 'massSaveRollerTab');
     else try { win.focus(); } catch (e) {}
     setBadge();
     send({ type: 'pong', roll20Open: true, direct: true });
   }
   window.__msrLink = { relink, version: VERSION, stop: () => cleanups.forEach(f => { try { f(); } catch (e) {} }) };
   relink(win);
-  logEv('linked', 'roll20 page ' + ((Campaign.activePage && Campaign.activePage().get('name')) ? 'ok' : '?') + ', popup ' + (win ? 'open' : 'BLOCKED'));
+  logEv('linked', 'roll20 page ' + ((Campaign.activePage && Campaign.activePage().get('name')) ? 'ok' : '?') + ', roller ' + (win ? 'open' : 'BLOCKED'));
   console.log(TAG, 'ready', VERSION);
 })();

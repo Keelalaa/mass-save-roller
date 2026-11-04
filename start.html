@@ -35,8 +35,9 @@ code{background:#181420;border:1px solid var(--line);border-radius:5px;padding:1
   <div class="card">
     <h2>Using it with Roll20 — nothing to install</h2>
     <p>Drag this gold button up onto your bookmarks bar <span class="muted">(press Ctrl+Shift+B if you don't see the bar)</span>:</p>
-    <a class="btn bm" href="javascript:(async()=>{window.__msrWin=window.open('https://mass-save-roller.vercel.app/?r20=1','massSaveRoller','popup,width=600,height=900');const t=await (await fetch('https://mass-save-roller.vercel.app/r20.js?'+Date.now())).text();(0,eval)(t)})()" onclick="event.preventDefault();this.textContent='Drag me up to the bookmarks bar ↑'">⚔️ Mass Save</a>
-    <p>Then, in your Roll20 game, click the <b>⚔️ Mass Save</b> bookmark. The roller opens in its own window, linked to Roll20.</p>
+    <a class="btn bm" href="javascript:(async()=>{window.__msrWin=window.open('https://mass-save-roller.vercel.app/?r20=1','massSaveRollerTab');const t=await (await fetch('https://mass-save-roller.vercel.app/r20.js?'+Date.now())).text();(0,eval)(t)})()" onclick="event.preventDefault();this.textContent='Drag me up to the bookmarks bar ↑'">⚔️ Mass Save</a>
+    <p>Then, in your Roll20 game, click the <b>⚔️ Mass Save</b> bookmark. The roller opens in a new tab, linked to Roll20.</p>
+    <p class="muted">Want both side by side? Drag the roller's tab out of Chrome. Have an older ⚔️ Mass Save bookmark that opens a window? It still works. To get tabs instead, delete it and drag this one up.</p>
     <p class="muted">Click it once each time you open or reload Roll20. Changing maps is fine.</p>
   </div>
 
