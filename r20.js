@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.1.0';
+  const VERSION = '2.1.1';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -78,18 +78,18 @@
   // Puts a new row where its number belongs and leaves every other row where it is. A list in
   // high-to-low order is simply filled in. A list that isn't (the fight is under way and Roll20 has
   // rotated it) is walked from its highest number, and whoever's turn it is stays on top.
+  const highToLow = list => list.every((t, i) => !i || prNum(list[i - 1]) >= prNum(t));
+  const startFrom = (list, row) => { const a = list.indexOf(row); return list.slice(a).concat(list.slice(0, a)); };
   function insertTurn(list, row) {
+    const inOrder = highToLow(list);
     const nums = list.map(prNum);
-    const inOrder = nums.every((n, i) => !i || nums[i - 1] >= n);
     const head = inOrder ? 0 : nums.indexOf(Math.max(...nums));
     const active = list[0];
     const walk = list.slice(head).concat(list.slice(0, head));
     let at = walk.findIndex(t => prNum(t) < prNum(row));
     if (at < 0) at = walk.length;
     walk.splice(at, 0, row);
-    if (inOrder) return walk;
-    const a = walk.indexOf(active);
-    return walk.slice(a).concat(walk.slice(0, a));
+    return inOrder ? walk : startFrom(walk, active);
   }
   // Each pair is "key:number" (add or re-number) or "key:x" (take off). The key is a token id, or
   // "~name" for an enemy with no token. A token already on the list never gets a second row. Answers
@@ -106,11 +106,15 @@
       const value = decodeURIComponent(p.raw);
       if (value !== 'x' && custom == null && !graphics.get(p.id)) { missing.push(p.id); return; }   // not on this map
       prev.push({ key: p.id, pr: had ? String(had.pr) : 'x' });
+      // Mid-fight, a new number for whoever's turn it is must not hand the turn to someone else.
+      const keepTurn = had && list[0] === had && !highToLow(list);
       list = list.filter(t => t !== had);
       if (value === 'x') return;
       had ? changed++ : added++;
-      list = insertTurn(list, had ? Object.assign({}, had, { pr: value })
-        : { id: custom != null ? '-1' : p.id, pr: value, custom: custom != null ? custom : '', _pageid: page.id });
+      const row = had ? Object.assign({}, had, { pr: value })
+        : { id: custom != null ? '-1' : p.id, pr: value, custom: custom != null ? custom : '', _pageid: page.id };
+      list = insertTurn(list, row);
+      if (keepTurn) list = startFrom(list, row);
     });
     Campaign.save({ turnorder: JSON.stringify(list) });
     const w = Campaign.initiativewindow;
