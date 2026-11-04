@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.1.6';
+  const VERSION = '2.1.7';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -218,7 +218,9 @@
         let hp = Math.max(0, b.cur - p.n);
         if (b.max > 0) hp = Math.min(hp, Math.max(b.max, b.cur));
         writeBar(m, bar, hp);
-        if (opts.dead === '1') setDead(m, hp <= 0);
+        // The X only comes off when a token is healed up from 0, so one the GM placed on a living
+        // token (or a condition using the X) isn't wiped by the next HP change.
+        if (opts.dead === '1' && (hp <= 0 || b.cur <= 0)) setDead(m, hp <= 0);
         results.push({ id: p.id, name: m.get('name'), hp, max: b.max });
       });
       if (notSelected.length) logEv('refused', 'asked ' + notSelected.map(s => s.slice(-4)).join(',') + ' | selected ' + sel.map(m => m.id.slice(-4)).join(',') + ' | raw ' + (d20() ? d20().engine.tabletopSelected().length : '?'));

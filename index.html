@@ -120,9 +120,18 @@ header .sp{flex:1}
 .wlist span{background:#1b1722;border-radius:6px;padding:3px 8px;font-size:13px}
 .wlist span.done{background:#1f4a32}
 #condBox{margin:6px 0 4px 24px}
-#condIcons{display:flex;flex-wrap:wrap;gap:4px;max-height:176px;overflow-y:auto;margin:6px 0;padding:2px}
+#condBar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:6px 0}
+#condCurrent{display:flex;align-items:center;gap:6px;min-width:0;font-weight:600;font-size:14px}
+#condToggle{white-space:nowrap}
+#condPanel{margin:4px 0 6px}
+#condIcons{margin-top:4px}
+.mgroup{margin-top:8px}
+.mgroup[hidden]{display:none}
+.mgrid{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;padding:2px}
 #condIcons button{width:34px;height:34px;padding:3px;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:9px;line-height:1}
+#condIcons button[hidden]{display:none}
 #condIcons button.on{outline:2px solid var(--gold2);background:#3a2f18}
+.mdot.mx{background:none;color:#e23a3a;font-weight:900;text-align:center;line-height:20px;font-size:18px}
 .micon{width:24px;height:24px;display:block;object-fit:contain}
 .mdot{display:block;width:20px;height:20px;border-radius:50%}
 .nm .micon,.nm .mdot{display:inline-block;width:15px;height:15px;vertical-align:-3px;margin-left:3px}
@@ -175,8 +184,15 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
       <div class="row"><label><input type="checkbox" id="spCondOn"> Lasting condition on a failed save</label></div>
       <div id="condBox" hidden>
         <input id="spCondName" placeholder="Name (optional), like Muddled Thoughts" style="width:100%">
-        <div id="condIcons"></div>
-        <div id="condPicked" class="hint"></div>
+        <div id="condBar">
+          <div id="condCurrent"></div>
+          <button type="button" id="condToggle" class="small"></button>
+        </div>
+        <div id="condPanel" hidden>
+          <input id="condSearch" placeholder="Search icons by name" style="width:100%">
+          <div id="condIcons"></div>
+        </div>
+        <div class="hint">The icon goes on tokens that fail the save, if they’re selected in Roll20.</div>
       </div>
 <div style="margin-bottom:10px"></div>
       <div class="r20box">
@@ -243,7 +259,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.9';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.4.0';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -379,28 +395,48 @@ function renderR20(){
 }
 // ---------- lasting condition: a Roll20 status icon on tokens that failed the save ----------
 // The icons come from the Roll20 game once linked. Until then, this list gives their names.
-const MARK_COLORS=['red','blue','green','brown','purple','pink','yellow'];
+// Roll20's panel: 7 colors + the X, 16 condition icons from the D&D 5e sheet, then the game's icon set.
+const MARK_COLORS={red:'#c91010',blue:'#1076c9',green:'#2fc910',brown:'#c97310',purple:'#9510c9',pink:'#eb75e1',yellow:'#e5eb75'};
+const SHEET_URL='https://cdn.roll20.net/roll20-beacon-sheets/tokenmarkers/';
+const MARK_SHEET=[['blinded','Blinded'],['charmed','Charmed'],['deafened','Deafened'],['exhausted','Exhausted'],['frightened','Frightened'],['grappled','Grappled'],['incapacitated','Incapacitated'],['invisible','Invisible'],['paralyzed','Paralyzed'],['petrified','Petrified'],['poisoned','Poisoned'],['prone','Prone'],['restrained','Restrained'],['stunned','Stunned'],['unconscious','Unconscious'],['zoof','Custom','generic']]
+  .map(([id,name,file])=>({tag:'sheet-'+id,name,url:SHEET_URL+(file||id)+'.png',group:'D&D 5e conditions'}));
 const MARK_NAMES='skull sleepy half-heart half-haze interdiction snail lightning-helix spanner chained-heart chemical-bolt death-zone drink-me edge-crack ninja-mask stopwatch fishing-net overdrive strong fist padlock three-leaves fluffy-wing pummeled tread arrowed aura back-pain black-flag bleeding-eye bolt-shield broken-heart cobweb broken-shield flying-flag radioactive trophy broken-skull frozen-orb rolling-bomb white-tower grab screaming grenade sentry-gun all-for-one angel-outfit archery-target'.split(' ');
 function spellCond(){const s=state.spell;return s.cond||(s.cond={on:false,name:'',tag:''});}
+const niceName=s=>{const t=String(s||'').replace(/[-_]+/g,' ').trim();return t.charAt(0).toUpperCase()+t.slice(1);};
 function markList(){
   const icons=state.markers&&state.markers.length?state.markers:MARK_NAMES.map(tag=>({tag,name:tag,url:''}));
-  return MARK_COLORS.map(tag=>({tag,name:tag,color:tag})).concat(icons);
+  return Object.entries(MARK_COLORS).map(([tag,color])=>({tag,name:niceName(tag),color,group:'Colors'}))
+    .concat({tag:'dead',name:'Red X',x:true,group:'Colors'},MARK_SHEET,icons.map(m=>({tag:m.tag,name:niceName(m.name),url:m.url,group:'Icons'})));
 }
 const findMark=tag=>markList().find(m=>m.tag===tag);
 function markIcon(tag){
   const m=findMark(tag);
   if(m&&m.color)return `<span class="mdot" style="background:${m.color}"></span>`;
-  if(m&&/^https:\/\//.test(m.url||''))return `<img class="micon" src="${esc(m.url)}" alt="${esc(m.name)}" title="${esc(m.name)}">`;
+  if(m&&m.x)return '<span class="mdot mx">✕</span>';
+  if(m&&/^https:\/\//.test(m.url||''))return `<img class="micon" src="${esc(m.url)}" alt="${esc(m.name)}">`;
   return esc(m?m.name:tag);
 }
 const markName=tag=>{const m=findMark(tag);return m?m.name:tag;};
+let condOpen=false,condSearch='';
 function renderCond(){
-  const c=spellCond();
+  const c=spellCond(),list=markList();
   $('#spCondOn').checked=!!c.on;
   $('#condBox').hidden=!c.on;
   if(document.activeElement!==$('#spCondName'))$('#spCondName').value=c.name||'';
-  $('#condIcons').innerHTML=markList().map(m=>`<button type="button" class="${m.tag===c.tag?'on':''}" data-mark="${esc(m.tag)}" title="${esc(m.name)}">${markIcon(m.tag)}</button>`).join('');
-  $('#condPicked').textContent=c.tag?`Icon: ${markName(c.tag)}. It goes on tokens that fail the save, if they’re selected in Roll20.`:'Pick the icon for tokens that fail the save.';
+  $('#condCurrent').innerHTML=c.tag?`${markIcon(c.tag)}<span>${esc(markName(c.tag))}</span>`:'<span class="muted">No icon picked yet</span>';
+  $('#condToggle').textContent=condOpen?'▴ Minimize':`▾ Show all ${list.length} icons`;
+  $('#condPanel').hidden=!condOpen;
+  if(condOpen){
+    const groups=[...new Set(list.map(m=>m.group))];
+    $('#condIcons').innerHTML=groups.map(gr=>`<div class="mgroup" data-group="${esc(gr)}"><div class="lbl">${esc(gr)}</div><div class="mgrid">${list.filter(m=>m.group===gr).map(m=>`<button type="button" class="${m.tag===c.tag?'on':''}" data-mark="${esc(m.tag)}" data-name="${esc(m.name.toLowerCase())}" title="${esc(m.name)}">${markIcon(m.tag)}</button>`).join('')}</div></div>`).join('');
+    filterCond();
+  }
+}
+// Hides what doesn't match without redrawing, so the search box keeps its place.
+function filterCond(){
+  const q=condSearch.trim().toLowerCase();
+  document.querySelectorAll('#condIcons button').forEach(b=>{b.hidden=!!q&&!b.dataset.name.includes(q);});
+  document.querySelectorAll('#condIcons .mgroup').forEach(g=>{g.hidden=!g.querySelector('button:not([hidden])');});
 }
 async function loadMarkers(){
   if(!ext.direct)return;
@@ -500,9 +536,12 @@ function bindSpell(){
   $('#spDC').addEventListener('input',e=>{s().dc=clamp(num(e.target.value,10),1,40);save();});
   document.querySelectorAll('input[name=onSuccess]').forEach(r=>r.addEventListener('change',e=>{s().onSuccess=e.target.value;save();}));
   $('#spIsSpell').addEventListener('change',e=>{s().isSpell=e.target.checked;save();});
-  $('#spCondOn').addEventListener('change',e=>{spellCond().on=e.target.checked;save();renderCond();if(e.target.checked)loadMarkers();});
+  $('#spCondOn').addEventListener('change',e=>{const c=spellCond();c.on=e.target.checked;if(c.on&&!c.tag)condOpen=true;save();renderCond();if(c.on)loadMarkers();});
   $('#spCondName').addEventListener('input',e=>{spellCond().name=e.target.value;save();});
-  $('#condIcons').addEventListener('click',e=>{const b=e.target.closest('[data-mark]');if(!b)return;spellCond().tag=b.dataset.mark;save();renderCond();});
+  $('#condToggle').addEventListener('click',()=>{condOpen=!condOpen;renderCond();});
+  $('#condSearch').addEventListener('input',e=>{condSearch=e.target.value;filterCond();});
+  // Picking an icon minimizes the list again, so it's out of the way.
+  $('#condIcons').addEventListener('click',e=>{const b=e.target.closest('[data-mark]');if(!b)return;spellCond().tag=b.dataset.mark;condOpen=false;condSearch='';$('#condSearch').value='';save();renderCond();});
   $('#markLine').addEventListener('click',e=>{if(e.target.dataset.marksync==='retry')flushMarks();});
   $('#natRule').addEventListener('change',e=>{state.rules.nat=e.target.checked;save();recompute();});
   $('#r20On').addEventListener('change',e=>{state.rules.roll20=e.target.checked;save();renderR20();if(e.target.checked)pingExt();});
