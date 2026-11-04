@@ -228,7 +228,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.5';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.6';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -774,14 +774,26 @@ function pingExt(){
   linkPost({type:'ping'});
   pingTimer=setTimeout(()=>{if(ext.state==='checking'){ext.state='none';renderR20();logEv('ext','not found');}},1500);
 }
-// The link drops if Roll20 is reloaded or closed; notice that instead of failing silently.
-setInterval(()=>{if(ext.direct&&(!window.opener||window.opener.closed)){ext.direct=false;ext.state='none';ext.roll20Open=false;renderR20();logEv('ext','roll20 window gone');}},3000);
+// The link drops if Roll20 is reloaded or closed; notice that instead of still saying "Linked". The
+// same check keeps this page current: each answer brings the Turn Order, and the tokens are re-read.
+let pingSentAt=0,pongAt=0;
+setInterval(()=>{
+  if(!state.rules.roll20)return;
+  const now=Date.now(),open=window.opener&&!window.opener.closed;
+  const noAnswer=pingSentAt&&pongAt<pingSentAt&&now-pingSentAt>6000;
+  if(ext.direct&&(!open||noAnswer)){
+    ext.direct=false;ext.state='none';ext.roll20Open=false;renderR20();
+    logEv('ext',open?'roll20 stopped answering':'roll20 window gone');
+  }
+  if(open&&(!pingSentAt||pongAt>=pingSentAt||noAnswer)){pingSentAt=now;linkPost({type:'ping'});}
+  if(ext.direct&&now-refreshedAt>=3500)refreshTokens('live');
+},2000);
 window.addEventListener('message',ev=>{
   const d=ev.data;if(!d)return;
   const fromRoll20=d.source==='msr-ext2'&&ev.origin===ROLL20_ORIGIN&&ev.source===window.opener;
   const fromAddon=d.source==='msr-ext'&&ev.source===window;
   if(!fromRoll20&&!fromAddon)return;
-  if(d.type==='pong'){const was=ext.state+ext.roll20Open;ext.state='ok';ext.roll20Open=d.roll20Open;ext.version=d.version;
+  if(d.type==='pong'){pongAt=Date.now();const was=ext.state+ext.roll20Open;ext.state='ok';ext.roll20Open=d.roll20Open;ext.version=d.version;
     if(d.direct){const first=!ext.direct;ext.direct=true;ext.script='ok';if(first)setTimeout(()=>refreshTokens('linked'),300);}
     renderR20();checkScript();if(was!==ext.state+ext.roll20Open)logEv('ext',`connected v${d.version}${d.direct?' (bookmark)':''}, roll20 open: ${d.roll20Open}`);}
   else if(d.type==='stale'){ext.state='stale';renderR20();logEv('ext','stale (add-on reloaded)');}
@@ -885,22 +897,44 @@ function initDice(d20s,formula){
 // The list is kept high → low; equal totals stay in the order they were rolled.
 const initTotal=r=>r.fixed!=null?r.fixed:r.d20+r.bonus;
 const turnKey=r=>r.tokenId||'~'+encodeURIComponent(r.name);
-// A number changed in Roll20's Turn Order window shows up here too. A row waiting to be sent is
-// skipped: its new number hasn't reached Roll20 yet, so Roll20's older number mustn't replace it.
+// This list follows Roll20's Turn Order: new numbers, rows taken off, and tokens from the cards added
+// there by hand. A row waiting to be sent is left alone, since Roll20 hasn't got its number yet. While
+// this page is writing to the Turn Order, it doesn't listen, so it can't react to its own half-done
+// change. Tokens that aren't on a card stay off this list.
+let turnBusy=0;
 function onTurnOrder(list){
-  const L=state.lastInit;
-  if(!L||L.sent==='sending'||!Array.isArray(list))return;
+  if(turnBusy||!state.rules.roll20||!Array.isArray(list))return;
+  let L=state.lastInit;
+  if(L&&L.sent==='sending')return;
+  if(!list.length&&state.initHidden){delete state.initHidden;save();}
+  if(!L&&state.initHidden)return;   // the GM pressed Clear: stay hidden until the next roll
   const onRoll20=new Map(list.map(x=>[x.key,parseFloat(x.pr)]));
-  const waiting=new Set(L.retry?L.retry.keys:[]);
-  let n=0;
-  L.rows.forEach(r=>{
-    const key=turnKey(r),v=onRoll20.get(key);
-    if(waiting.has(key)||v==null||isNaN(v)||v===initTotal(r))return;
-    r.fixed=v;n++;
+  const waiting=new Set(L&&L.retry?L.retry.keys:[]);
+  let changed=0,added=0,removed=0;
+  const rows=(L?L.rows:[]).filter(r=>{
+    const key=turnKey(r);
+    if(waiting.has(key))return true;
+    if(!onRoll20.has(key)){removed++;return false;}
+    const v=onRoll20.get(key);
+    if(!isNaN(v)&&v!==initTotal(r)){r.fixed=v;changed++;}
+    return true;
   });
-  if(!n)return;
-  L.rows.sort((a,b)=>initTotal(b)-initTotal(a));
-  logEv('turn-edited',`${n} changed in Roll20`);
+  const listed=new Set(rows.map(turnKey));
+  state.groups.forEach(g=>g.enemies.forEach(e=>{
+    if(!e.tokenId||listed.has(e.tokenId)||!onRoll20.has(e.tokenId))return;
+    const v=onRoll20.get(e.tokenId);
+    rows.push({gid:g.id,eid:e.id,name:label(g,e),tokenId:e.tokenId,d20:null,bonus:num(g.init,0),fromRoll:false,fixed:isNaN(v)?0:v});
+    listed.add(e.tokenId);added++;
+  }));
+  if(!changed&&!added&&!removed)return;
+  rows.sort((a,b)=>initTotal(b)-initTotal(a));
+  if(!rows.length)state.lastInit=null;
+  else if(!L)state.lastInit={id:uid(),rows,sent:null,text:''};
+  else{
+    L.rows=rows;
+    if((added||removed)&&L.sent==='ok'){L.sent=null;L.text='';}   // "added 9" would no longer be true
+  }
+  logEv('turn-edited',`from Roll20: ${changed} new number, ${added} added, ${removed} removed`);
   save();renderResults();
 }
 function finishInit(P){
@@ -911,6 +945,7 @@ function finishInit(P){
   }).filter(Boolean);
   rows.sort((a,b)=>initTotal(b)-initTotal(a));
   state.pendingInit=null;
+  delete state.initHidden;
   state.lastInit={id:P.id,rows,sent:null,text:''};
   logEv('init-result',rows.map(r=>`${r.d20}${r.bonus?sgn(r.bonus):''}`).join(' '));
   save();renderResults();
@@ -926,6 +961,7 @@ async function sendTurn(rows,what,before){
   const keys=rows.map(turnKey);
   if(!ext.direct){L.sent='fail';L.text='Not linked to Roll20, so these aren’t on the Turn Order yet. Click the ⚔️ Mass Save bookmark in Roll20, select the tokens, then press the button.';L.retry={what,before,keys};save();renderResults();return;}
   L.sent='sending';L.text='Adding to Roll20’s Turn Order…';renderResults();
+  turnBusy++;
   try{
     const d=await r20Send(turnCmd(rows.map(r=>({key:turnKey(r),pr:String(initTotal(r))})),true));
     const named=ids=>rows.filter(r=>ids.includes(r.tokenId));
@@ -943,6 +979,7 @@ async function sendTurn(rows,what,before){
     if(did||!off.length)pushInitUndo(what,before,d.prev||[]);
     logEv('turn',`added ${d.added} changed ${d.changed} missing ${gone.length} notselected ${off.length}`);
   }catch(err){L.sent='fail';L.text='❌ '+r20Problem(err);L.retry={what,before,keys};}
+  finally{turnBusy--;}
   save();renderResults();
 }
 const enemyLabelById=r=>{const {g,e}=enemyOf(r);return e?label(g,e):r.name;};
@@ -954,11 +991,14 @@ function pushInitUndo(what,before,turn){
 }
 async function swapInit(s,other){
   let back=[];
+  const was=JSON.stringify(state.lastInit||null);   // copied first, so the opposite button gets this list back
   if(s.turn&&s.turn.length){
+    turnBusy++;
     try{const d=await r20Send(turnCmd(s.turn));back=d.prev||[];logEv('turn-back',`${s.what}: sent ${s.turn.length} rows`);}
     catch(err){(other===redoStack?undoStack:redoStack).push(s);renderUndo();logEv('turn-back-failed',`${s.what}: ${err&&err.message||err}`);toast(r20Problem(err));return;}
+    finally{turnBusy--;}
   }
-  other.push({what:s.what,init:JSON.stringify(state.lastInit||null),turn:back});
+  other.push({what:s.what,init:was,turn:back});
   state.lastInit=JSON.parse(s.init);save();renderResults();renderUndo();
 }
 async function usePastedInit(){
@@ -1008,7 +1048,7 @@ function renderInit(){
     return;
   }
   if(!L){box.innerHTML='';return;}
-  const rows=L.rows.map((r,i)=>`<tr><td><b>${esc(enemyLabelById(r))}</b></td><td><input type="number" min="1" max="20" data-id20="${i}" value="${r.d20}"></td><td class="muted">${sgn(r.bonus)}${r.fromRoll?'<span class="tag">from your roll</span>':''}</td><td><b>${initTotal(r)}</b>${r.fixed!=null?'<span class="tag">set in Roll20</span>':''}</td></tr>`).join('');
+  const rows=L.rows.map((r,i)=>`<tr><td><b>${esc(enemyLabelById(r))}</b></td><td><input type="number" min="1" max="20" data-id20="${i}" value="${r.d20!=null?r.d20:''}"></td><td class="muted">${sgn(r.bonus)}${r.fromRoll?'<span class="tag">from your roll</span>':''}</td><td><b>${initTotal(r)}</b>${r.fixed!=null?'<span class="tag">set in Roll20</span>':''}</td></tr>`).join('');
   const cls=L.sent==='fail'||L.sent==='blocked'?'blocked':L.sent||'';
   box.innerHTML=(L.sent?`<div class="syncline ${cls}" style="margin-top:8px"><span>${esc(L.text)}</span>${L.retry?' <button class="small" data-iact="retry">Add to Turn Order</button>':''}</div>`:'')+
     `<div class="tablewrap"><table class="res"><thead><tr><th>Enemy</th><th>d20</th><th>Bonus</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -1025,6 +1065,7 @@ function bindInit(){
   // A dice number fixed by hand: the total and that one enemy's Turn Order number follow.
   box.addEventListener('change',ev=>{
     const i=ev.target.dataset.id20,L=state.lastInit;if(i==null||!L)return;
+    if(ev.target.value.trim()===''){renderResults();return;}
     const before=JSON.stringify(L),r=L.rows[i];
     r.d20=clamp(num(ev.target.value,r.d20),1,20);delete r.fixed;
     const one=[r];
@@ -1034,7 +1075,7 @@ function bindInit(){
   });
   $('#initUndo').addEventListener('click',undoEdit);
   $('#initRedo').addEventListener('click',redoEdit);
-  $('#initClear').addEventListener('click',()=>{snapResults('clear initiative');state.lastInit=null;save();renderResults();toast('Initiative list cleared. Roll20’s Turn Order wasn’t changed.','Undo',undoEdit);});
+  $('#initClear').addEventListener('click',()=>{snapResults('clear initiative');state.lastInit=null;state.initHidden=true;save();renderResults();toast('Initiative list cleared. Roll20’s Turn Order wasn’t changed.','Undo',undoEdit);});
   $('#initPasteBtn').addEventListener('click',usePastedInit);
   $('#initPaste').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();usePastedInit();}});
   $('#initBonus').addEventListener('change',ev=>{
