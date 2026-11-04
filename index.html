@@ -259,7 +259,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.8.2';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.8.3';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -1427,15 +1427,16 @@ async function pullTokens(gid){
     const g=findG(gid);if(!g)return;
     snap(`use selected Roll20 tokens in ${g.name}`);
     const step=undoStack[undoStack.length-1],msg=mergeTokens(d.tokens,g);
-    toast(msg+(d.used?await numberTokens(g,d.used,step):''));
+    toast(msg+(d.used?await numberTokens(g,d.used,step,new Set(d.tokens.map(t=>t.id))):''));
   }catch(err){toast(r20Problem(err));}
 }
 // Tokens with no name, or a name another token on this map also has, get numbered in Roll20 ("Cat 1",
 // "Cat 2") for easier tracking. A name nothing else has is left alone. Numbers already taken on the
 // map are skipped, so a second group of Cats carries on from the first.
-async function numberTokens(g,used,step){
+async function numberTokens(g,used,step,selIds){
   const count={};used.forEach(n=>{count[n]=(count[n]||0)+1;});
-  const rows=g.enemies.filter(e=>e.tokenId);
+  // Only the tokens just selected can be renamed, so only they may use up a number.
+  const rows=g.enemies.filter(e=>e.tokenId&&selIds.has(e.tokenId));
   // A plain "Cat" that joins Cat 1 to Cat 7 needs a number too, even though no other token is just "Cat".
   const numbered=name=>used.some(n=>n!==name&&n.startsWith(name+' ')&&/^\d+$/.test(n.slice(name.length+1)));
   const change=rows.filter(e=>!e.tname||count[e.tname]>1||numbered(e.tname));
