@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.1.1';
+  const VERSION = '2.1.2';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -93,11 +93,12 @@
   }
   // Each pair is "key:number" (add or re-number) or "key:x" (take off). The key is a token id, or
   // "~name" for an enemy with no token. A token already on the list never gets a second row. Answers
-  // with what each key had before, which is what Undo sends back.
-  function setTurnOrder(pairs, open) {
+  // with what each key had before, which is what Undo sends back. With selIds, a token that isn't
+  // selected at this moment is refused (Undo and Redo only put back what was already allowed).
+  function setTurnOrder(pairs, open, selIds) {
     const page = Campaign.activePage(), graphics = page.thegraphics;
     let list = readTurnOrder();
-    const prev = [], missing = [];
+    const prev = [], missing = [], notSelected = [];
     let added = 0, changed = 0;
     pairs.forEach(p => {
       const custom = p.id[0] === '~' ? decodeURIComponent(p.id.slice(1)) : null;
@@ -105,6 +106,7 @@
       const had = list.find(same);
       const value = decodeURIComponent(p.raw);
       if (value !== 'x' && custom == null && !graphics.get(p.id)) { missing.push(p.id); return; }   // not on this map
+      if (value !== 'x' && custom == null && selIds && !selIds.has(p.id)) { notSelected.push(p.id); return; }
       prev.push({ key: p.id, pr: had ? String(had.pr) : 'x' });
       // Mid-fight, a new number for whoever's turn it is must not hand the turn to someone else.
       const keepTurn = had && list[0] === had && !highToLow(list);
@@ -119,7 +121,7 @@
     Campaign.save({ turnorder: JSON.stringify(list) });
     const w = Campaign.initiativewindow;
     if (open && w && !w.isOpen) w.toggleWindow();
-    return { added, changed, missing, prev };
+    return { added, changed, missing, notSelected, prev };
   }
 
   // Same command language the website already speaks: "!msr-<cmd> <req> opt=val id:number ..."
@@ -127,7 +129,7 @@
     const parts = String(text).trim().split(/\s+/), cmd = parts[0], req = parts[1] || '';
     const opts = {}, pairs = [];
     parts.slice(2).forEach(p => {
-      const eq = /^(bar|dead|tbar|empty0|open)=(\w+)$/.exec(p);
+      const eq = /^(bar|dead|tbar|empty0|open|sel)=(\w+)$/.exec(p);
       if (eq) { opts[eq[1]] = eq[2]; return; }
       const i = p.lastIndexOf(':');
       // "id:number" or, for !msr-init, "id:hp~max"
@@ -154,7 +156,11 @@
     }
 
     // Turn Order only: no token's HP or anything else on the token is touched.
-    if (cmd === '!msr-turn') { reply('TURN', setTurnOrder(pairs, opts.open === '1')); return; }
+    if (cmd === '!msr-turn') {
+      const selIds = opts.sel === '1' ? new Set(selectedGraphics().map(m => m.id)) : null;
+      reply('TURN', setTurnOrder(pairs, opts.open === '1', selIds));
+      return;
+    }
 
     const sel = selectedGraphics();
     const selById = new Map(sel.map(m => [m.id, m]));

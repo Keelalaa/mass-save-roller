@@ -211,7 +211,7 @@ header .sp{flex:1}
   <section>
     <div class="panel">
       <h2>Enemies <span class="sp"></span><button id="undoEdit" class="small" disabled>↩ Undo</button><button id="redoEdit" class="small" disabled>↪ Redo</button><button id="toggleAll" class="small" title="Minimize or expand every card">Minimize all</button><button id="addGroup" class="primary small">+ Add enemy group</button></h2>
-      <div class="hint">Each group is one kind of monster (e.g. 6 Goblins). Tick the enemies caught in the spell (or rolling initiative). Click a damage type to cycle: <span class="chip resist">resistant</span> <span class="chip immune">immune</span> <span class="chip vuln">vulnerable</span>.</div>
+      <div class="hint">Each group is one kind of monster (e.g. 6 Goblins). Tick the enemies caught in the spell. Click a damage type to cycle: <span class="chip resist">resistant</span> <span class="chip immune">immune</span> <span class="chip vuln">vulnerable</span>.</div>
       <div id="groups"></div>
     </div>
   </section>
@@ -221,7 +221,7 @@ header .sp{flex:1}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.1';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.2';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -802,29 +802,41 @@ function syncPending(){
 const pendingDone=P=>P.recs.every(r=>r.d20.length>=r.need)&&(!P.dmg||P.dmg.every(p=>p.total!=null));
 
 // ---------- initiative ----------
-// Each ticked enemy that's still standing rolls one d20 and adds its card's Initiative +. Dice are
-// handed out card by card, in the same order as the enemies are listed (left → right for tokens).
+// Each enemy rolling gets one d20 plus its card's Initiative +. Dice are handed out card by card, in
+// the same order as the enemies are listed (left → right for tokens). When linked to Roll20, the
+// tokens selected there when Start is pressed are the ones rolling; ticks decide everyone else.
 const enemyOf=r=>{const g=findG(r.gid);return {g,e:g&&g.enemies.find(x=>x.id===r.eid)};};
-function startInit(forceWait){
+const initRolls=(e,sel)=>e.hp>0&&(e.tokenId&&sel?sel.includes(e.tokenId):e.target);
+async function startInit(forceWait){
   if(state.pending){toast('A mass save is waiting for its dice — finish or stop that first.');return;}
+  let sel=null;
+  if(state.rules.roll20&&ext.direct){
+    try{const d=await r20Send(`!msr-sel {req} bar=${state.rules.r20Bar}`);sel=(d.tokens||[]).map(t=>t.id);}
+    catch(err){toast(r20Problem(err));return;}
+    if(state.pending||state.pendingInit)return;
+  }
   const recs=[];
-  state.groups.forEach(g=>g.enemies.forEach(e=>{if(e.target&&e.hp>0)recs.push({gid:g.id,eid:e.id,d20:null});}));
-  if(!recs.length){toast('Tick at least one enemy that is still standing.');return;}
-  state.pendingInit={id:uid(),recs};
-  logEv('init-start',`targets=${recs.length} tokens=${recs.filter(r=>enemyOf(r).e.tokenId).length}`);
+  state.groups.forEach(g=>g.enemies.forEach(e=>{if(initRolls(e,sel))recs.push({gid:g.id,eid:e.id,d20:null});}));
+  if(!recs.length){toast(!sel?'Tick at least one enemy that is still standing.':sel.length?'Those tokens aren’t on a card yet, or are at 0 HP. Use ⬇ Use selected Roll20 tokens first.':'Select the tokens that are rolling in Roll20 first, then click this again.');return;}
+  state.pendingInit={id:uid(),recs,sel};
+  logEv('init-start',`targets=${recs.length} tokens=${recs.filter(r=>enemyOf(r).e.tokenId).length} selected=${sel?sel.length:'-'}`);
   if(state.rules.roll20||forceWait===true){
     save();renderResults();
-    if(ext.state!=='ok'&&forceWait!==true)toast('Not linked to Roll20 — click the ⚔️ Mass Save bookmark in Roll20, or paste your dice in the Initiative box.');
+    const onCards=new Set(state.groups.flatMap(g=>g.enemies.map(e=>e.tokenId)));
+    const off=sel?sel.filter(id=>!onCards.has(id)).length:0;
+    if(off)toast(`${off} selected token${off===1?' isn’t':'s aren’t'} on a card, so ${off===1?'it isn’t':'they aren’t'} rolling. Use ⬇ Use selected Roll20 tokens to add ${off===1?'it':'them'}.`);
+    else if(ext.state!=='ok'&&forceWait!==true)toast('Not linked to Roll20 — click the ⚔️ Mass Save bookmark in Roll20, or paste your dice in the Initiative box.');
     return;
   }
   finishInit(state.pendingInit);
 }
-// While waiting, the list follows the ticks, same as a mass save.
+// While waiting, the list follows the ticks, same as a mass save (selected tokens stay as they were
+// when Start was pressed; one that gets deselected is refused and named when its dice are in).
 function syncPendingInit(){
   const P=state.pendingInit;if(!P)return;
   const byE=new Map(P.recs.map(r=>[r.eid,r])),recs=[];
   state.groups.forEach(g=>g.enemies.forEach(e=>{
-    if(!e.target||e.hp<=0)return;
+    if(!initRolls(e,P.sel))return;
     const r=byE.get(e.id);
     if(r){r.gid=g.id;recs.push(r);}else recs.push({gid:g.id,eid:e.id,d20:null});
   }));
@@ -858,26 +870,35 @@ function finishInit(P){
   $('#initPanel').scrollIntoView({behavior:'smooth',block:'nearest'});
   sendTurn(rows,'roll initiative',before);
 }
-// Sends these rows to Roll20's Turn Order. Undo gets what Roll20 had before, so taking a roll back
-// only touches these rows — never whoever else is on the list.
+// Sends these rows to Roll20's Turn Order; Roll20 refuses any token not selected at that moment.
+// Undo gets what Roll20 had before, so taking a roll back only touches these rows — never whoever
+// else is on the list.
 async function sendTurn(rows,what,before){
   const L=state.lastInit;
   if(!state.rules.roll20){pushInitUndo(what,before,[]);return;}
-  if(!ext.direct){L.sent='fail';L.text='Not linked to Roll20, so these aren’t on the Turn Order yet. Click the ⚔️ Mass Save bookmark in Roll20, then press the button.';L.retry={what,before};save();renderResults();return;}
+  const keys=rows.map(turnKey);
+  if(!ext.direct){L.sent='fail';L.text='Not linked to Roll20, so these aren’t on the Turn Order yet. Click the ⚔️ Mass Save bookmark in Roll20, select the tokens, then press the button.';L.retry={what,before,keys};save();renderResults();return;}
   L.sent='sending';L.text='Adding to Roll20’s Turn Order…';renderResults();
   try{
-    const d=await r20Send(turnCmd(rows.map(r=>({key:turnKey(r),pr:String(initTotal(r))}))));
-    const gone=rows.filter(r=>(d.missing||[]).includes(r.tokenId)).map(r=>enemyLabelById(r));
+    const d=await r20Send(turnCmd(rows.map(r=>({key:turnKey(r),pr:String(initTotal(r))})),true));
+    const named=ids=>rows.filter(r=>ids.includes(r.tokenId));
+    const gone=named(d.missing||[]),off=named(d.notSelected||[]);
+    const nameList=l=>l.map(enemyLabelById).join(', ');
+    const did=d.added||d.changed;
     delete L.retry;
-    L.sent=gone.length?'blocked':'ok';
-    L.text=(d.added||d.changed?`✅ Roll20 Turn Order: ${d.added?`added ${d.added}`:''}${d.added&&d.changed?', ':''}${d.changed?`new number for ${d.changed} already on it`:''}. `:'')+(gone.length?`Not on the map you’re looking at, so NOT added: ${gone.join(', ')}.`:'');
-    pushInitUndo(what,before,d.prev||[]);
-    logEv('turn',`added ${d.added} changed ${d.changed} missing ${gone.length}`);
-  }catch(err){L.sent='fail';L.text='❌ '+r20Problem(err);L.retry={what,before};}
+    L.sent=gone.length||off.length?'blocked':'ok';
+    L.text=(did?`✅ Roll20 Turn Order: ${d.added?`added ${d.added}`:''}${d.added&&d.changed?', ':''}${d.changed?`new number for ${d.changed} already on it`:''}. `:'')
+      +(gone.length?`Not on the map you’re looking at, so NOT added: ${nameList(gone)}. `:'')
+      +(off.length?`Not selected in Roll20, so NOT added: ${nameList(off)}. Select ${off.length===1?'it':'them'} and press the button.`:'');
+    // Nothing went through: the next try still counts as this same step for Undo.
+    if(off.length)L.retry=did?{what,keys:off.map(turnKey)}:{what,before,keys:off.map(turnKey)};
+    if(did||!off.length)pushInitUndo(what,before,d.prev||[]);
+    logEv('turn',`added ${d.added} changed ${d.changed} missing ${gone.length} notselected ${off.length}`);
+  }catch(err){L.sent='fail';L.text='❌ '+r20Problem(err);L.retry={what,before,keys};}
   save();renderResults();
 }
 const enemyLabelById=r=>{const {g,e}=enemyOf(r);return e?label(g,e):r.name;};
-const turnCmd=list=>`!msr-turn {req} open=1 `+list.map(x=>`${x.key}:${encodeURIComponent(x.pr)}`).join(' ');
+const turnCmd=(list,sel)=>`!msr-turn {req} open=1${sel?' sel=1':''} `+list.map(x=>`${x.key}:${encodeURIComponent(x.pr)}`).join(' ');
 function pushInitUndo(what,before,turn){
   undoStack.push({what,init:before,turn});
   if(undoStack.length>40)undoStack.shift();
@@ -905,7 +926,7 @@ function renderInit(){
   b.textContent=P?'⏹ Stop reading Roll20 rolls':state.rules.roll20?'⚡ Start initiative — then roll in Roll20':'⚡ Roll initiative';
   b.classList.toggle('stop',!!P);
   $('#initClear').hidden=!L||!!P;
-  $('#initHint').textContent=P?'':'Ticked enemies each roll their own d20 + their card’s Initiative +.'+(state.rules.roll20?' Then they go on Roll20’s Turn Order. Anyone already on it keeps their spot and number.':'');
+  $('#initHint').textContent=P?'':state.rules.roll20?'Select the tokens that are rolling in Roll20 first. Each rolls its own d20 + its card’s Initiative +, then goes on the Turn Order. Anyone already on it keeps their spot and number.':'Ticked enemies each roll their own d20 + their card’s Initiative +.';
   if(P){
     const got=P.recs.filter(r=>r.d20!=null).length,need=P.recs.length;
     const names=P.recs.map(r=>{const {g,e}=enemyOf(r);return e?`<span class="${r.d20!=null?'done':''}">${esc(label(g,e))}: ${r.d20!=null?r.d20:'…'}</span>`:'';}).join('');
@@ -921,7 +942,7 @@ function renderInit(){
   if(!L){box.innerHTML='';return;}
   const rows=L.rows.map((r,i)=>`<tr><td><b>${esc(enemyLabelById(r))}</b></td><td><input type="number" min="1" max="20" data-id20="${i}" value="${r.d20}"></td><td class="muted">${sgn(r.bonus)}</td><td><b>${initTotal(r)}</b></td></tr>`).join('');
   const cls=L.sent==='fail'||L.sent==='blocked'?'blocked':L.sent||'';
-  box.innerHTML=(L.sent?`<div class="syncline ${cls}" style="margin-top:8px"><span>${esc(L.text)}</span>${L.retry&&L.sent==='fail'?' <button class="small" data-iact="retry">Add to Turn Order</button>':''}</div>`:'')+
+  box.innerHTML=(L.sent?`<div class="syncline ${cls}" style="margin-top:8px"><span>${esc(L.text)}</span>${L.retry?' <button class="small" data-iact="retry">Add to Turn Order</button>':''}</div>`:'')+
     `<div class="tablewrap"><table class="res"><thead><tr><th>Enemy</th><th>d20</th><th>Bonus</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function bindInit(){
@@ -931,7 +952,7 @@ function bindInit(){
     const P=state.pendingInit,L=state.lastInit;
     if(a.dataset.iact==='fill'&&P)finishInit(P);
     else if(a.dataset.iact==='cancel'&&P){state.pendingInit=null;save();renderResults();}
-    else if(a.dataset.iact==='retry'&&L&&L.retry)sendTurn(L.rows,L.retry.what,L.retry.before);
+    else if(a.dataset.iact==='retry'&&L&&L.retry)sendTurn(L.rows.filter(r=>L.retry.keys.includes(turnKey(r))),L.retry.what,L.retry.before!=null?L.retry.before:JSON.stringify(L));
   });
   // A dice number fixed by hand: the total and that one enemy's Turn Order number follow.
   box.addEventListener('change',ev=>{
@@ -989,7 +1010,7 @@ function onRoll20Roll(roll){
       const again=()=>onRoll20Roll(Object.assign({},roll,{id:roll.id+':again'}));
       toast(`Got your Roll20 dice (${roll.formula||'d20s'}), but nothing was waiting for them.`,
         'Use for saves',()=>{doRoll();if(state.pending)again();},
-        'Use for initiative',()=>{startInit(true);if(state.pendingInit)again();});
+        'Use for initiative',async()=>{await startInit(true);if(state.pendingInit)again();});
     }
     return;
   }
@@ -1182,7 +1203,7 @@ function refreshTokens(why){
 // Re-read first (max 2.5 s), then start — so a save always works from Roll20's real HP.
 async function freshThen(fn){
   if(ext.direct&&tokenEnemies().length)await Promise.race([refreshTokens('before save'),new Promise(r=>setTimeout(r,2500))]);
-  fn();
+  return fn();
 }
 window.addEventListener('focus',()=>{if(Date.now()-refreshedAt>5000)refreshTokens('window focus');});
 function onTokenChange(t){
