@@ -182,7 +182,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
       <div class="lbl" style="margin-top:10px">Damage (on a fail)</div>
       <div id="parts"></div>
       <div class="row"><button id="addPart" class="small">+ Add another damage type</button></div>
-      <div class="hint">Type the damage you rolled, like <b>16</b>. Leave it empty if the effect does no damage. The type is optional — only pick one if some enemies resist or are immune to it.</div>
+      <div class="hint">Type the damage rolled, like <b>16</b>. Leave it empty if the effect does no damage. The type is optional — only pick one if some enemies resist or are immune to it.</div>
       <div class="row"><label><input type="checkbox" id="spIsSpell"> It's a spell (Magic Resistance applies)</label></div>
       <div class="row"><label><input type="checkbox" id="spCondOn"> Lasting condition on a failed save</label></div>
       <div id="condBox" hidden>
@@ -263,7 +263,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.9.0';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.9.1';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -995,27 +995,36 @@ setInterval(()=>{
   }
   if(open&&(!pingSentAt||pongAt>=pingSentAt||noAnswer)){pingSentAt=now;linkPost({type:'ping'});}
   if(ext.direct&&now-refreshedAt>=3500)refreshTokens('live');
-  if(ext.direct&&!state.pending&&!state.pendingInit)readSelection(false);
+  if(ext.direct)readSelection(false);
 },2000);
 // When linked, a token row's tick follows what's selected in Roll20. Only a new selection changes
 // ticks, so a tick changed by hand stays until the selection changes. Clicking away (nothing selected)
 // leaves them alone until Start, because a save can't change a token that isn't selected. Rows with no
-// token keep their ticks. Nothing changes while a roll is waiting for its dice.
+// token keep their ticks. While a roll is waiting for its dice, the waiting list follows the selection
+// too. A selection with nobody on a card who can roll is ignored then, so a stray click on a player or
+// a prop can't end the wait. P.hold stops a selection change from finishing the roll by itself: a
+// mis-click shouldn't apply damage, so it finishes when dice land or the GM presses the button.
 let selSeen=null,selBusy=false,lastSel=[];
 function applySelection(ids,atStart){
-  if(state.pending&&!atStart)return;
   const key=[...ids].sort().join(',');
   if(key===selSeen&&(key||!atStart))return;
   selSeen=key;
   if(!key&&(!atStart||!state.rules.r20Hp))return;
-  let changed=false;
+  const P=state.pending||state.pendingInit;
+  if(P&&!atStart){
+    const canRoll=state.groups.some(g=>g.enemies.some(e=>e.tokenId&&e.hp>0&&ids.includes(e.tokenId)));
+    if(!canRoll)return;
+    P.hold=true;
+  }
+  if(state.pendingInit&&!atStart)state.pendingInit.sel=[...ids];
+  let changed=!!P&&!atStart;
   state.groups.forEach(g=>g.enemies.forEach(e=>{
     if(!e.tokenId)return;
     const on=ids.includes(e.tokenId);if(!!e.target===on)return;
     e.target=on;changed=true;
     const box=document.querySelector(`[data-eid="${e.id}"] [data-e=target]`);if(box)box.checked=on;
   }));
-  if(changed){save();updateTargetCount();}
+  if(changed){save();updateTargetCount();if(P&&!atStart)renderResults();}
 }
 async function readSelection(atStart){
   if(selBusy&&!atStart)return;
@@ -1041,11 +1050,13 @@ window.addEventListener('message',ev=>{
   else if(d.type==='setupack'){if(!d.ok)toast('Couldn’t find your game’s ID — open your game’s Settings → Mod (API) Scripts and the setup box will appear there.');}
 });
 window.addEventListener('focus',()=>{if(state.rules.roll20){if(ext.state!=='stale')ext.state=ext.state==='ok'?'ok':'checking';pingExt();}});
-// While waiting for Roll20 dice, the list follows the ticked enemies: untick one and it drops out
-// (with any dice it already had), tick one and it joins.
+// While waiting for Roll20 dice, the list follows the ticked enemies: untick one and it drops out,
+// tick one and it joins. P.kept remembers the dice of anyone who dropped out, so a mis-click on the
+// map doesn't lose dice that were already rolled.
 function syncPending(){
   const P=state.pending;if(!P)return;
-  const byE=new Map(P.recs.map(r=>[r.eid,r])),recs=[];
+  P.kept=P.kept||{};P.recs.forEach(r=>{P.kept[r.eid]=r;});
+  const byE=new Map(Object.entries(P.kept)),recs=[];
   state.groups.forEach(g=>g.enemies.forEach(e=>{
     if(!e.target||e.hp<=0)return;
     const r=byE.get(e.id);
@@ -1054,7 +1065,7 @@ function syncPending(){
   }));
   P.recs=recs;
   if(!recs.length){state.pending=null;setTimeout(()=>{renderResults();toast('No enemies ticked — stopped waiting for dice.');},0);return;}
-  if(pendingDone(P))setTimeout(()=>{if(state.pending===P&&pendingDone(P))startResult(P);},0);
+  if(pendingDone(P)&&!P.hold)setTimeout(()=>{if(state.pending===P&&pendingDone(P))startResult(P);},0);
 }
 const pendingDone=P=>P.recs.every(r=>r.d20.length>=r.need)&&(!P.dmg||P.dmg.every(p=>p.total!=null));
 
@@ -1087,11 +1098,12 @@ async function startInit(forceWait){
   }
   finishInit(state.pendingInit);
 }
-// While waiting, the list follows the ticks, same as a mass save (selected tokens stay as they were
-// when Start was pressed; one that gets deselected is refused and named when its dice are in).
+// While waiting, the list follows the selection in Roll20 (P.sel) and, for enemies with no token, the
+// ticks, same as a mass save. P.kept remembers the dice of anyone who dropped out.
 function syncPendingInit(){
   const P=state.pendingInit;if(!P)return;
-  const byE=new Map(P.recs.map(r=>[r.eid,r])),recs=[];
+  P.kept=P.kept||{};P.recs.forEach(r=>{P.kept[r.eid]=r;});
+  const byE=new Map(Object.entries(P.kept)),recs=[];
   state.groups.forEach(g=>g.enemies.forEach(e=>{
     if(!initRolls(e,P.sel))return;
     const r=byE.get(e.id);
@@ -1099,7 +1111,7 @@ function syncPendingInit(){
   }));
   P.recs=recs;
   if(!recs.length){state.pendingInit=null;setTimeout(()=>{renderResults();toast('No enemies ticked — stopped waiting for dice.');},0);return;}
-  if(recs.every(r=>r.d20!=null))setTimeout(()=>{if(state.pendingInit===P&&P.recs.every(r=>r.d20!=null))finishInit(P);},0);
+  if(recs.every(r=>r.d20!=null)&&!P.hold)setTimeout(()=>{if(state.pendingInit===P&&P.recs.every(r=>r.d20!=null))finishInit(P);},0);
 }
 // A plain number in the roll ("9d20+3") is that roll's bonus for each die. Only d20s plus whole
 // numbers count; anything else ("9d20+1d4") is odd, so its extras are ignored and the GM is told.
@@ -1305,10 +1317,11 @@ function renderInit(){
     const names=P.recs.map(r=>{const {g,e}=enemyOf(r);return e?`<span class="${r.d20!=null?'done':''}">${esc(label(g,e))}: ${r.d20!=null?r.d20:'…'}</span>`:'';}).join('');
     box.innerHTML=`<div class="waiting" style="margin-top:8px">
       <h3>📡 Waiting for your initiative dice</h3>
-      <div>In Roll20 chat, roll ${copyBtn(`/r ${need-got}d20`)}${got?` <span class="muted">(${got} already in)</span>`:''}. The Initiative + above gets added to each one. If you type a bonus in the roll, like <b>/r ${need-got}d20+3</b>, that +3 goes on each one instead. You can also roll them a few at a time.</div>
+      <div>${need>got?`In Roll20 chat, roll ${copyBtn(`/r ${need-got}d20`)}${got?` <span class="muted">(${got} already in)</span>`:''}. The Initiative + above gets added to each one. If you type a bonus in the roll, like <b>/r ${need-got}d20+3</b>, that +3 goes on each one instead. Prefer smaller rolls? Send <b>/r 2d20</b>, and the button then shows what’s left.`:'All the d20s are in for these tokens. Press Done, or select more tokens in Roll20.'}</div>
+      <div class="hint">This list follows your selection in Roll20. Select fewer tokens and it shrinks within a couple of seconds.</div>
       <div class="prog" style="margin-top:6px">${got} / ${need} d20s</div>
       <div class="wlist">${names}</div>
-      <div class="row"><button class="small" data-iact="fill">Roll the rest here</button><button class="small danger" data-iact="cancel">Cancel</button></div>
+      <div class="row"><button class="small" data-iact="fill">${need>got?'Roll the rest here':'Done'}</button><button class="small danger" data-iact="cancel">Cancel</button></div>
     </div>`;
     return;
   }
@@ -1773,10 +1786,11 @@ function renderResults(){
       `<div style="margin-top:8px"><b>Damage:</b> ${P.dmg.map(p=>p.total==null?`waiting for ${copyBtn(`/r ${p.dice}`)} ${esc(p.type)}`:`<span class="ok">${p.total} ${esc(p.type)}</span>`).join(' · ')}</div>`:'';
     box.innerHTML=`<div class="waiting">
       <h3>📡 Waiting for your Roll20 dice — DC ${P.spell.dc} ${P.spell.ability.toUpperCase()} save</h3>
-      <div>${need>got?`In Roll20 chat, roll ${copyBtn(`/r ${need-got}d20`)}`:'All the d20s are in'}${got?` <span class="muted">(${got} already in)</span>`:''}${two?` <span class="muted">(${two} enem${two===1?'y has':'ies have'} advantage/disadvantage, so ${two===1?'it needs':'they need'} 2 dice)</span>`:''}. Only the single dice are used — Roll20's total doesn't matter. You can also roll them a few at a time.</div>
+      <div>${need>got?`In Roll20 chat, roll ${copyBtn(`/r ${need-got}d20`)}`:'All the d20s are in'}${got?` <span class="muted">(${got} already in)</span>`:''}${two?` <span class="muted">(${two} enem${two===1?'y has':'ies have'} advantage/disadvantage, so ${two===1?'it needs':'they need'} 2 dice)</span>`:''}. Only the single dice are used — Roll20's total doesn't matter.${need>got?' Prefer smaller rolls? Send <b>/r 2d20</b>, and the button then shows what’s left.':' Press Done, or select more tokens in Roll20.'}</div>
+      <div class="hint">This list follows your selection in Roll20. Select fewer tokens and it shrinks within a couple of seconds.</div>
       <div class="prog" style="margin-top:6px">${got} / ${need} d20s</div>
       <div class="wlist">${names}</div>${dmgLine}
-      <div class="row"><button class="small" data-pact="fill">Roll the rest here</button><button class="small danger" data-pact="cancel">Cancel</button></div>
+      <div class="row"><button class="small" data-pact="fill">${need>got?'Roll the rest here':'Done'}</button><button class="small danger" data-pact="cancel">Cancel</button></div>
       ${ext.state==='ok'?'':'<div class="hint bad">The Roll20 add-on isn’t connected, so dice from Roll20 can’t arrive.</div>'}
     </div>`;
     return;
