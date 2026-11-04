@@ -228,7 +228,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.4';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.5';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -787,6 +787,7 @@ window.addEventListener('message',ev=>{
   else if(d.type==='stale'){ext.state='stale';renderR20();logEv('ext','stale (add-on reloaded)');}
   else if(d.type==='roll'){ext.state='ok';ext.roll20Open=true;renderR20();onRoll20Roll(d.roll);}
   else if(d.type==='tokenchange'){onTokenChange(d.tok);}
+  else if(d.type==='turnorder'){onTurnOrder(d.rows);}
   else if(d.type==='cmdack'){if(!d.ok){const w=r20wait.get(d.req);if(w){r20wait.delete(d.req);clearTimeout(w.timer);w.rej(new Error(d.error||'failed'));}}}
   else if(d.type==='reply'&&d.data){const w=r20wait.get(d.data.req);if(w){r20wait.delete(d.data.req);clearTimeout(w.timer);w.res(d.data);}}
   else if(d.type==='setupack'){if(!d.ok)toast('Couldn’t find your game’s ID — open your game’s Settings → Mod (API) Scripts and the setup box will appear there.');}
@@ -882,8 +883,26 @@ function initDice(d20s,formula){
   else{save();renderResults();}
 }
 // The list is kept high → low; equal totals stay in the order they were rolled.
-const initTotal=r=>r.d20+r.bonus;
+const initTotal=r=>r.fixed!=null?r.fixed:r.d20+r.bonus;
 const turnKey=r=>r.tokenId||'~'+encodeURIComponent(r.name);
+// A number changed in Roll20's Turn Order window shows up here too. A row waiting to be sent is
+// skipped: its new number hasn't reached Roll20 yet, so Roll20's older number mustn't replace it.
+function onTurnOrder(list){
+  const L=state.lastInit;
+  if(!L||L.sent==='sending'||!Array.isArray(list))return;
+  const onRoll20=new Map(list.map(x=>[x.key,parseFloat(x.pr)]));
+  const waiting=new Set(L.retry?L.retry.keys:[]);
+  let n=0;
+  L.rows.forEach(r=>{
+    const key=turnKey(r),v=onRoll20.get(key);
+    if(waiting.has(key)||v==null||isNaN(v)||v===initTotal(r))return;
+    r.fixed=v;n++;
+  });
+  if(!n)return;
+  L.rows.sort((a,b)=>initTotal(b)-initTotal(a));
+  logEv('turn-edited',`${n} changed in Roll20`);
+  save();renderResults();
+}
 function finishInit(P){
   const before=JSON.stringify(state.lastInit||null);
   const rows=P.recs.map(rec=>{
@@ -989,7 +1008,7 @@ function renderInit(){
     return;
   }
   if(!L){box.innerHTML='';return;}
-  const rows=L.rows.map((r,i)=>`<tr><td><b>${esc(enemyLabelById(r))}</b></td><td><input type="number" min="1" max="20" data-id20="${i}" value="${r.d20}"></td><td class="muted">${sgn(r.bonus)}${r.fromRoll?'<span class="tag">from your roll</span>':''}</td><td><b>${initTotal(r)}</b></td></tr>`).join('');
+  const rows=L.rows.map((r,i)=>`<tr><td><b>${esc(enemyLabelById(r))}</b></td><td><input type="number" min="1" max="20" data-id20="${i}" value="${r.d20}"></td><td class="muted">${sgn(r.bonus)}${r.fromRoll?'<span class="tag">from your roll</span>':''}</td><td><b>${initTotal(r)}</b>${r.fixed!=null?'<span class="tag">set in Roll20</span>':''}</td></tr>`).join('');
   const cls=L.sent==='fail'||L.sent==='blocked'?'blocked':L.sent||'';
   box.innerHTML=(L.sent?`<div class="syncline ${cls}" style="margin-top:8px"><span>${esc(L.text)}</span>${L.retry?' <button class="small" data-iact="retry">Add to Turn Order</button>':''}</div>`:'')+
     `<div class="tablewrap"><table class="res"><thead><tr><th>Enemy</th><th>d20</th><th>Bonus</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -1007,7 +1026,7 @@ function bindInit(){
   box.addEventListener('change',ev=>{
     const i=ev.target.dataset.id20,L=state.lastInit;if(i==null||!L)return;
     const before=JSON.stringify(L),r=L.rows[i];
-    r.d20=clamp(num(ev.target.value,r.d20),1,20);
+    r.d20=clamp(num(ev.target.value,r.d20),1,20);delete r.fixed;
     const one=[r];
     L.rows.sort((a,b)=>initTotal(b)-initTotal(a));
     save();renderResults();

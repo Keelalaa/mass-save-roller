@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.1.3';
+  const VERSION = '2.1.4';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -305,6 +305,13 @@
   const pageEvery = setInterval(watchPage, 2000);   // follows map (page) changes
   cleanups.push(() => { clearInterval(pageEvery); if (watched) watched.off('change', onGraphicChange); });
 
+  // ---------- Turn Order numbers changed in Roll20 → website ----------
+  // Only tells the website what the list says. It changes nothing in Roll20.
+  const sendTurnOrder = () => send({ type: 'turnorder', rows: readTurnOrder().map(t => ({
+    key: String(t.id) === '-1' ? '~' + encodeURIComponent(t.custom || '') : t.id, pr: t.pr })) });
+  Campaign.on('change:turnorder', sendTurnOrder);
+  cleanups.push(() => Campaign.off('change:turnorder', sendTurnOrder));
+
   // ---------- talking to the website window ----------
   window.addEventListener('message', onMessage);
   cleanups.push(() => window.removeEventListener('message', onMessage));
@@ -312,7 +319,7 @@
     const d = ev.data;
     if (ev.origin !== SITE || !d || d.source !== 'msr-page2') return;
     if (win !== ev.source) win = ev.source;
-    if (d.type === 'ping') { send({ type: 'pong', roll20Open: true, direct: true }); return; }
+    if (d.type === 'ping') { send({ type: 'pong', roll20Open: true, direct: true }); sendTurnOrder(); return; }
     if (d.type === 'cmd') {
       // Each command runs once per Roll20 page, even if two copies of this link ever run at once.
       const doneReq = window.__msrDoneReq || (window.__msrDoneReq = new Set());
