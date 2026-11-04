@@ -201,6 +201,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
         <label class="sub hpopt">HP is on bar <select id="r20Bar"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
         <label class="sub hpopt">Temp HP is on bar <select id="r20TBar"><option value="">Not used</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
         <label class="sub hpopt"><input type="checkbox" id="r20Dead"> Mark tokens at 0 HP as dead</label>
+        <label class="sub" title="When tokens are added to a card, ones with no name or a shared name get numbered in Roll20. Never changes Nameplate or what players can see."><input type="checkbox" id="r20Name"> Number token names when added to a card</label>
         <div id="r20Status" class="hint"></div>
         <details class="hint"><summary>How to link Roll20 (get the bookmark)</summary>
           <ol>
@@ -259,7 +260,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.8.4';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.8.5';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -369,7 +370,7 @@ function renderSpell(){
   renderCond();
   $('#natRule').checked=state.rules.nat;
   $('#r20On').checked=state.rules.roll20;
-  $('#r20Hp').checked=state.rules.r20Hp;$('#r20Bar').value=state.rules.r20Bar;$('#r20TBar').value=state.rules.r20TBar||'';$('#r20Dead').checked=state.rules.r20Dead;
+  $('#r20Hp').checked=state.rules.r20Hp;$('#r20Bar').value=state.rules.r20Bar;$('#r20TBar').value=state.rules.r20TBar||'';$('#r20Dead').checked=state.rules.r20Dead;$('#r20Name').checked=state.rules.r20Name!==false;
   renderParts();renderR20();
 }
 let rollBtnAt=0,initBtnAt=0;   // a quick double-click must not stop and restart straight away
@@ -557,6 +558,7 @@ function bindSpell(){
     state.groups.forEach(g=>g.enemies.forEach(x=>{if(x.tokenId)x.syncedTemp=null;}));
     save();if(e.target.value)refreshTokens('temp bar set');});
   $('#r20Dead').addEventListener('change',e=>{state.rules.r20Dead=e.target.checked;save();});
+  $('#r20Name').addEventListener('change',e=>{state.rules.r20Name=e.target.checked;save();});
   $('#r20Status').addEventListener('click',e=>{if(e.target.dataset.setup!=null){window.postMessage({source:'msr-page',type:'setup'},location.origin);toast('Opening your game’s Mod Scripts page — click “Install it for me” in the box there.');}
     else if(e.target.dataset.recheck!=null)checkScript(true);});
   $('#syncLine').addEventListener('click',e=>{if(e.target.dataset.sync==='retry')runSync(true);});
@@ -1427,7 +1429,7 @@ async function pullTokens(gid){
     const g=findG(gid);if(!g)return;
     snap(`use selected Roll20 tokens in ${g.name}`);
     const step=undoStack[undoStack.length-1],msg=mergeTokens(d.tokens,g);
-    toast(msg+(d.used?await numberTokens(g,d.used,step,new Set(d.tokens.map(t=>t.id))):''));
+    toast(msg+(d.used&&state.rules.r20Name!==false?await numberTokens(g,d.used,step,new Set(d.tokens.map(t=>t.id))):''));
   }catch(err){toast(r20Problem(err));}
 }
 // Tokens with no name, or a name another token on this map also has, get numbered in Roll20 ("Cat 1",
