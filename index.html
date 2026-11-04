@@ -142,6 +142,9 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 #initBonus label{display:flex;align-items:center;gap:8px;font-size:13px}
 #initBonus .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 #initBonus input{width:64px}
+#initBonus .ibrow{display:flex;flex-direction:column;gap:4px}
+#initBonus .tieline{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:4px 12px}
+#initBonus select{max-width:170px}
 .r20box.nohp .hpopt{display:none}
 #rollBtn.stop,#initBtn.stop{background:linear-gradient(#e0565b,#a8373b);color:#fff}
 .mergesel{font-size:13px;padding:4px 6px;max-width:150px}
@@ -260,7 +263,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.8.5';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.9.0';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -626,6 +629,10 @@ function groupHTML(g){
         <label><span class="lbl">Initiative +</span><input data-f="init" ${K('init')} type="number" value="${num(g.init,0)||''}" style="width:64px" placeholder="0" title="Added to each of this group's initiative rolls. Can be negative."></label>
         <button class="small" data-act="resethp" title="Give every enemy in this group fresh HP">Reset all HP</button>
       </div>
+      <div class="row tierow">
+        <label><span class="lbl">Tie breaker</span><select data-f="tie" ${K('tie')} title="${TIE_TIP}">${tieOptions(g)}</select></label>
+        ${g.tie==='dex'?`<label><span class="lbl">DEX score</span><input data-f="dexScore" ${K('dexScore')} type="number" min="1" max="99" value="${esc(g.dexScore||'')}" style="width:64px" placeholder="14" title="${DEX_TIP}"></label>`:''}
+      </div>
       <div class="lbl">Saving throw modifiers</div>
       <div class="saves">${saves}</div>
       <div class="opts">
@@ -789,7 +796,8 @@ function bindGroups(){
       else if(f==='cover')g.cover=num(t.value);
       else if(t.type==='checkbox')g[f]=t.checked;
       else g[f]=t.value;
-      if(f==='init')renderInitBonus();
+      if(f==='init'||f==='dexScore')renderInitBonus();
+      if(f==='tie'){save();renderGroups();return;}   // shows or hides the DEX score box
       save();recompute();return;
     }
     if(t.dataset.save){g.saves[t.dataset.save]=num(t.value);save();recompute();return;}
@@ -1123,7 +1131,22 @@ function initDice(d20s,formula){
   else{save();renderResults();}
 }
 // The list is kept high → low; equal totals stay in the order they were rolled.
-const initTotal=r=>r.fixed!=null?r.fixed:r.d20+r.bonus;
+const initTotal=r=>r.fixed!=null?r.fixed:Math.round((r.d20+r.bonus+(r.tie||0))*100)/100;
+// A tie breaker is a decimal under 1, so it only ever sorts equal totals. The 5.5 rule itself has the
+// GM choose the order of a tie, which is what Off leaves them with. DEX 14 adds .14, so tokens with the
+// same DEX still tie. Random gives each token in the roll its own decimal.
+const TIE_TIP='Adds a decimal to each initiative total, so ties sort themselves. Off leaves ties for you to order, which is the 5.5 rule. It stays set after each roll.';
+const DEX_TIP='This monster’s DEX score, not its modifier. 14 adds .14.';
+const tieOptions=g=>[['','Off: you order ties'],['random','Random decimal'],['dex','DEX score decimal']].map(([v,t])=>`<option value="${v}"${(g.tie||'')===v?' selected':''}>${t}</option>`).join('');
+const fmtTie=t=>t?t.toFixed(2).slice(1):'';
+function tieFor(g,used){
+  if(g.tie==='dex')return clamp(Math.round(num(g.dexScore,0)),0,99)/100;
+  if(g.tie!=='random')return 0;
+  let v,i=0;
+  do{v=rnd(99)/100;}while(used.has(v)&&++i<200);
+  used.add(v);
+  return v;
+}
 const turnKey=r=>r.tokenId||'~'+encodeURIComponent(r.name);
 // This list follows Roll20's Turn Order: new numbers, rows taken off, and tokens from the cards added
 // there by hand. A row waiting to be sent is left alone, since Roll20 hasn't got its number yet. While
@@ -1167,11 +1190,14 @@ function onTurnOrder(list){
 }
 function finishInit(P){
   const before=JSON.stringify(state.lastInit||null);
+  const usedTies=new Set();
   const rows=P.recs.map(rec=>{
     const {g,e}=enemyOf(rec);if(!e)return null;
-    return {gid:rec.gid,eid:rec.eid,name:label(g,e),tokenId:e.tokenId||null,d20:rec.d20!=null?rec.d20:rnd(20),bonus:rec.flat!=null?rec.flat:num(g.init,0),fromRoll:rec.flat!=null};
+    return {gid:rec.gid,eid:rec.eid,name:label(g,e),tokenId:e.tokenId||null,d20:rec.d20!=null?rec.d20:rnd(20),bonus:rec.flat!=null?rec.flat:num(g.init,0),fromRoll:rec.flat!=null,tie:tieFor(g,usedTies)};
   }).filter(Boolean);
   rows.sort((a,b)=>initTotal(b)-initTotal(a));
+  const noDex=[...new Set(rows.map(r=>r.gid))].map(findG).filter(g=>g&&g.tie==='dex'&&!num(g.dexScore,0)).map(g=>g.name);
+  if(noDex.length)toast(`No DEX score typed for ${noDex.join(', ')}, so no tie breaker was added there.`);
   state.pendingInit=null;
   delete state.initHidden;
   // The bonus only counts for this roll: each card that rolled goes back to 0. The numbers are kept
@@ -1250,7 +1276,8 @@ async function usePastedInit(){
 // One box per card, the same number as the card's Initiative + field.
 function renderInitBonus(){
   const box=$('#initBonus');if(!box||box.contains(document.activeElement))return;
-  box.innerHTML=state.groups.map(g=>`<label><span class="nm">${esc(g.name||'Enemy group')}</span><span class="lbl">Initiative +</span><input type="number" data-ib="${g.id}" value="${num(g.init,0)||''}" placeholder="0" title="Added to each of this group's initiative rolls. Can be negative."></label>`).join('');
+  box.innerHTML=state.groups.map(g=>`<div class="ibrow"><label><span class="nm">${esc(g.name||'Enemy group')}</span><span class="lbl">Initiative +</span><input type="number" data-ib="${g.id}" value="${num(g.init,0)||''}" placeholder="0" title="Added to each of this group's initiative rolls. Can be negative."></label>
+    <div class="tieline"><label><span class="lbl">Tie breaker</span><select data-tie="${g.id}" title="${TIE_TIP}">${tieOptions(g)}</select></label>${g.tie==='dex'?`<label><span class="lbl">DEX score</span><input type="number" min="1" max="99" data-dexs="${g.id}" value="${esc(g.dexScore||'')}" placeholder="14" title="${DEX_TIP}"></label>`:''}</div></div>`).join('');
 }
 const copyBtn=cmd=>`<button class="small copycmd" data-copy="${esc(cmd)}" data-label="📋 Copy ${esc(cmd)}" title="Copies this, ready to paste into Roll20 chat">📋 Copy ${esc(cmd)}</button>`;
 async function copyCmd(b){
@@ -1286,10 +1313,11 @@ function renderInit(){
     return;
   }
   if(!L){box.innerHTML='';return;}
-  const rows=L.rows.map((r,i)=>`<tr><td><b>${esc(enemyLabelById(r))}</b></td><td><input type="number" min="1" max="20" data-id20="${i}" value="${r.d20!=null?r.d20:''}"></td><td class="muted">${sgn(r.bonus)}${r.fromRoll?'<span class="tag">from your roll</span>':''}</td><td><b>${initTotal(r)}</b>${r.fixed!=null?'<span class="tag">set in Roll20</span>':''}</td></tr>`).join('');
+  const hasTie=L.rows.some(r=>r.tie);
+  const rows=L.rows.map((r,i)=>`<tr><td><b>${esc(enemyLabelById(r))}</b></td><td><input type="number" min="1" max="20" data-id20="${i}" value="${r.d20!=null?r.d20:''}"></td><td class="muted">${sgn(r.bonus)}${r.fromRoll?'<span class="tag">from your roll</span>':''}</td>${hasTie?`<td class="muted tiecol">${fmtTie(r.tie)}</td>`:''}<td><b>${initTotal(r)}</b>${r.fixed!=null?'<span class="tag">set in Roll20</span>':''}</td></tr>`).join('');
   const cls=L.sent==='fail'||L.sent==='blocked'?'blocked':L.sent||'';
   box.innerHTML=(L.sent?`<div class="syncline ${cls}" style="margin-top:8px"><span>${esc(L.text)}</span>${L.retry?' <button class="small" data-iact="retry">Add to Turn Order</button>':''}</div>`:'')+
-    `<div class="tablewrap"><table class="res"><thead><tr><th>Enemy</th><th>d20</th><th>Bonus</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    `<div class="tablewrap"><table class="res"><thead><tr><th>Enemy</th><th>d20</th><th>Bonus</th>${hasTie?'<th>Tie</th>':''}<th>Total</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function bindInit(){
   const box=$('#initBox');
@@ -1317,8 +1345,11 @@ function bindInit(){
   $('#initPasteBtn').addEventListener('click',usePastedInit);
   $('#initPaste').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();usePastedInit();}});
   $('#initBonus').addEventListener('change',ev=>{
-    const id=ev.target.dataset.ib,g=id&&findG(id);if(!g)return;
-    g.init=ev.target.value;save();renderGroups();
+    const t=ev.target,d=t.dataset,g=findG(d.ib||d.tie||d.dexs);if(!g)return;
+    if(d.ib)g.init=t.value;
+    else if(d.dexs)g.dexScore=t.value;
+    else{g.tie=t.value;t.blur();}   // blur lets the list redraw, to show or hide the DEX score box
+    save();renderGroups();
   });
   document.addEventListener('click',ev=>{const b=ev.target.closest('[data-copy]');if(b)copyCmd(b);});
 }
