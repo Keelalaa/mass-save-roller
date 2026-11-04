@@ -228,7 +228,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.6';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.7';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -946,9 +946,13 @@ function finishInit(P){
   rows.sort((a,b)=>initTotal(b)-initTotal(a));
   state.pendingInit=null;
   delete state.initHidden;
-  state.lastInit={id:P.id,rows,sent:null,text:''};
+  // The bonus only counts for this roll: each card that rolled goes back to 0. The numbers are kept
+  // with the list, so Undo can put them back.
+  const cardInit={};
+  new Set(rows.map(r=>r.gid)).forEach(id=>{const g=findG(id);if(g&&num(g.init,0)){cardInit[id]=g.init;g.init=0;}});
+  state.lastInit={id:P.id,rows,sent:null,text:'',cardInit};
   logEv('init-result',rows.map(r=>`${r.d20}${r.bonus?sgn(r.bonus):''}`).join(' '));
-  save();renderResults();
+  save();renderGroups();renderResults();
   $('#initPanel').scrollIntoView({behavior:'smooth',block:'nearest'});
   sendTurn(rows,'roll initiative',before);
 }
@@ -999,7 +1003,13 @@ async function swapInit(s,other){
     finally{turnBusy--;}
   }
   other.push({what:s.what,init:was,turn:back});
-  state.lastInit=JSON.parse(s.init);save();renderResults();renderUndo();
+  const cur=JSON.parse(was);
+  state.lastInit=JSON.parse(s.init);
+  // Undoing a whole roll puts its cards' Initiative + back, and Redo takes them to 0 again.
+  const to=state.lastInit,sameRoll=cur&&to&&cur.id===to.id;
+  if(!sameRoll&&other===redoStack&&cur&&cur.cardInit)Object.entries(cur.cardInit).forEach(([id,v])=>{const g=findG(id);if(g)g.init=v;});
+  if(!sameRoll&&other===undoStack&&to&&to.cardInit)Object.keys(to.cardInit).forEach(id=>{const g=findG(id);if(g)g.init=0;});
+  save();renderGroups();renderResults();renderUndo();
 }
 async function usePastedInit(){
   const inp=$('#initPaste'),dice=parsePastedD20(inp.value);
@@ -1034,7 +1044,7 @@ function renderInit(){
   b.textContent=P?'⏹ Stop reading Roll20 rolls':state.rules.roll20?'⚡ Start initiative — then roll in Roll20':'⚡ Roll initiative';
   b.classList.toggle('stop',!!P);
   $('#initClear').hidden=!L||!!P;
-  $('#initHint').textContent=P?'':state.rules.roll20?'Select the tokens that are rolling in Roll20 first. Each rolls its own d20 + the Initiative + above, then goes on the Turn Order. Anyone already on it keeps their spot and number.':'Ticked enemies each roll their own d20 + their card’s Initiative +.';
+  $('#initHint').textContent=P?'':state.rules.roll20?'Select the tokens that are rolling in Roll20 first. Each rolls its own d20 + the Initiative + above, which then goes back to 0, and goes on the Turn Order. Anyone already on it keeps their spot and number.':'Ticked enemies each roll their own d20 + their card’s Initiative +.';
   if(P){
     const got=P.recs.filter(r=>r.d20!=null).length,need=P.recs.length;
     const names=P.recs.map(r=>{const {g,e}=enemyOf(r);return e?`<span class="${r.d20!=null?'done':''}">${esc(label(g,e))}: ${r.d20!=null?r.d20:'…'}</span>`:'';}).join('');
