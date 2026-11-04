@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: rolls only ever change tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.3.0';
+  const VERSION = '2.3.1';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -173,22 +173,21 @@
     const sel = selectedGraphics();
     const selById = new Map(sel.map(m => [m.id, m]));
 
-    // !msr-name id:name renames a selected token and makes sure the GM can see its nameplate. What
-    // players could see stays the same: a plate they couldn't see becomes GM-only. Undo sends
-    // id:name,show,players to put a token exactly back. Answers with what each one had before.
+    // !msr-name id:name renames a selected token. It only ever saves the name: Nameplate and the
+    // players' See permission are the GM's, so the link never writes them. A nameless token whose
+    // Nameplate is on is skipped ("kept"), since giving it the card's name would show that name on
+    // the map. Answers with each token's old name, for Undo.
     if (cmd === '!msr-name') {
-      const graphics = Campaign.activePage().thegraphics, prev = [], missing = [], notSelected = [];
+      const graphics = Campaign.activePage().thegraphics, prev = [], missing = [], notSelected = [], kept = [];
       pairs.forEach(p => {
         const m = selById.get(p.id);
         if (!m) { (graphics.get(p.id) ? notSelected : missing).push(p.id); return; }
-        const was = { name: m.get('name') || '', show: !!m.get('showname'), players: !!m.get('showplayers_name') };
-        prev.push(p.id + ':' + encodeURIComponent(was.name) + ',' + (was.show ? 1 : 0) + ',' + (was.players ? 1 : 0));
-        const v = p.raw.split(','), ch = { name: decodeURIComponent(v[0]) };
-        if (v.length === 3) { ch.showname = v[1] === '1'; ch.showplayers_name = v[2] === '1'; }
-        else if (!was.show) { ch.showname = true; ch.showplayers_name = false; }
-        m.save(ch);
+        const was = m.get('name') || '', name = decodeURIComponent(p.raw.split(',')[0]);
+        if (!was && name && m.get('showname')) { kept.push(p.id); return; }
+        prev.push(p.id + ':' + encodeURIComponent(was));
+        m.save({ name });
       });
-      reply('NAME', { prev, missing, notSelected });
+      reply('NAME', { prev, missing, notSelected, kept });
       return;
     }
 
