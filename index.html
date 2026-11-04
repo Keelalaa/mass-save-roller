@@ -259,7 +259,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.4.0';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.4.1';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -923,6 +923,7 @@ function startResult(R){
   });
   if(R.dmg)R.dmg.forEach(p=>{if(p.total==null)Object.assign(p,rollDice(p.dice));});
   state.last={id:R.id,spell:R.spell,dmg:R.dmg,recs:R.recs,locked:false};state.pending=null;state.redo=null;
+  marks.done=0;marks.err='';marks.gone=[];renderMarkLine();   // a line from the last roll doesn't belong on this one
   state.log.unshift({id:R.id,text:''});state.log.length=Math.min(state.log.length,30);
   recompute();
 }
