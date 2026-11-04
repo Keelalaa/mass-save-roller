@@ -259,7 +259,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.8.0';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.8.1';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -1747,7 +1747,7 @@ function renderResults(){
     </div>`;
     return;
   }
-  if(!L){box.innerHTML='<p class="muted">Pick your spell, tick the enemies caught in it, then hit <b>Roll saves</b>.</p>';return;}
+  if(!L){box.innerHTML=`<p class="muted">Set up the save, ${state.rules.roll20?'select the tokens caught in it in Roll20, then hit <b>Start</b>':'tick the enemies caught in it, then hit <b>Roll saves</b>'}.</p>`;return;}
   const sp=L.spell,dis=L.locked?'disabled':'';
   const s=L.sum||{passN:0,failN:0,downN:0,dmgT:0};
   const dparts=L.dmg&&L.dmg.length?`<div class="dmgparts"><div class="lbl">Damage on a fail — change it here if needed</div>${L.dmg.map((p,j)=>`<div class="dp"><input type="number" min="0" data-dmg="${j}" value="${p.total}" ${dis}> <b>${esc(p.type||'damage')}</b></div>`).join('')}</div>`:'';
