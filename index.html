@@ -263,7 +263,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.9.2';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.9.3';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -1048,8 +1048,30 @@ window.addEventListener('focus',()=>{if(state.rules.roll20){if(ext.state!=='stal
 // While waiting for Roll20 dice, the list follows the ticked enemies: untick one and it drops out,
 // tick one and it joins. P.kept remembers the dice of anyone who dropped out, so a mis-click on the
 // map doesn't lose dice that were already rolled.
+// The save panel and the card settings can change while waiting too, and the wait follows them. The
+// dice needed are worked out again, and any dice already in go back down the list, the same as if the
+// new settings had been on from the start. P.hold stops that from finishing the roll by itself.
+function syncPendingSpell(P){
+  const parts=state.spell.parts.filter(p=>String(p.dice).trim()),key=JSON.stringify(parts);
+  P.spell=Object.assign(JSON.parse(JSON.stringify(state.spell)),{perTarget:false});
+  if(P.partsKey===undefined){P.partsKey=key;return;}
+  if(key===P.partsKey||!parts.every(p=>parseDice(p.dice).ok))return;
+  P.partsKey=key;
+  P.dmg=parts.map(p=>({type:p.type,dice:p.dice,...rollDice(p.dice)}));
+}
+function syncPendingNeed(P){
+  let changed=false;
+  P.recs.forEach(r=>{const g=findG(r.gid),n=g&&rollMode(g,P.spell)==='normal'?1:2;if(n!==r.need){r.need=n;changed=true;}});
+  if(!changed)return;
+  P.hold=true;
+  const pool=[...P.recs.flatMap(r=>r.d20),...(P.spare||[])];
+  P.recs.forEach(r=>{r.d20=[];});
+  P.spare=[];
+  for(const v of pool){const r=P.recs.find(x=>x.d20.length<x.need);if(r)r.d20.push(v);else P.spare.push(v);}
+}
 function syncPending(){
   const P=state.pending;if(!P)return;
+  syncPendingSpell(P);
   P.kept=P.kept||{};P.recs.forEach(r=>{P.kept[r.eid]=r;});
   const byE=new Map(Object.entries(P.kept)),recs=[];
   state.groups.forEach(g=>g.enemies.forEach(e=>{
@@ -1060,6 +1082,10 @@ function syncPending(){
   }));
   P.recs=recs;
   if(!recs.length){state.pending=null;setTimeout(()=>{renderResults();toast('No enemies ticked — stopped waiting for dice.');},0);return;}
+  syncPendingNeed(P);
+  // Redraw only when what's on screen changed, so a copy button's "Copied" isn't wiped on every save.
+  const sig=JSON.stringify([P.spell.dc,P.spell.ability,P.recs.map(r=>[r.eid,r.need,r.d20]),P.dmg]);
+  if(sig!==P.sig){P.sig=sig;setTimeout(()=>{if(state.pending===P)renderResults();},0);}
   if(pendingDone(P)&&!P.hold)setTimeout(()=>{if(state.pending===P&&pendingDone(P))startResult(P);},0);
 }
 const pendingDone=P=>P.recs.every(r=>r.d20.length>=r.need)&&(!P.dmg||P.dmg.every(p=>p.total!=null));
