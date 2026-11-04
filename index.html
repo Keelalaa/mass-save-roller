@@ -259,7 +259,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.4.1';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.4.2';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -518,7 +518,7 @@ function renderMarkLine(){
   const text=(marks.err?`❌ ${marks.err}`
     :q.length?(ext.direct?`Not selected in Roll20, so the icon wasn’t changed on: ${q.map(x=>x.name).join(', ')}. Select ${q.length===1?'it':'them'} and press Retry.`:`Not linked to Roll20, so the icon wasn’t changed on: ${q.map(x=>x.name).join(', ')}. Click the ⚔️ Mass Save bookmark, select ${q.length===1?'it':'them'} and press Retry.`)
     :marks.done?`✅ Updated the icon on ${marks.done} token${marks.done===1?'':'s'} in Roll20.`:'')+goneText;
-  el.hidden=!text;if(!text)return;
+  el.hidden=!text;el.style.display=text?'':'none';if(!text)return;   // .syncline's own display beats hidden
   el.className='syncline '+(marks.err||q.length||goneText?'blocked':'ok');
   el.innerHTML=`<span>🏷️ ${esc(text)}</span>${marks.err||q.length?' <button class="small" data-marksync="retry">Retry</button>':''}`;
 }
