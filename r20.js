@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: it only ever changes tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.1.5';
+  const VERSION = '2.1.6';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -185,18 +185,18 @@
     // answers whether each token already had the icon, so Undo won't take off one it didn't add.
     if (cmd === '!msr-mark') {
       const tag = decodeURIComponent(opts.m || '');
-      const results = [], notSelected = [];
+      const results = [], notSelected = [], missing = [];
       const isTag = x => x === tag || x.indexOf(tag + '@') === 0;   // "tag@2" is the icon with a number
       if (tag) pairs.forEach(p => {
         const m = selById.get(p.id);
-        if (!m) { notSelected.push(p.id); return; }
+        if (!m) { (Campaign.activePage().thegraphics.get(p.id) ? notSelected : missing).push(p.id); return; }
         const list = String(m.get('statusmarkers') || '').split(',').filter(Boolean);
         const had = list.some(isTag);
         if (p.n === 1 && !had) list.push(tag);
         m.save({ statusmarkers: (p.n === 1 ? list : list.filter(x => !isTag(x))).join(',') });
         results.push({ id: p.id, had });
       });
-      reply('MARK', { results, missing: [], notSelected });
+      reply('MARK', { results, missing, notSelected });
       return;
     }
     // !msr-dmg: take damage (negative heals). !msr-init: set the bar's HP and max (for image

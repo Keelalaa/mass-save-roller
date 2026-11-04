@@ -243,7 +243,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.8';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.3.9';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -412,7 +412,7 @@ async function loadMarkers(){
 // What each token should show is worked out from the results, so changing a die, the DC or using a
 // Legendary Resistance adds or takes off its icon too. Changes wait in a queue until Roll20 takes
 // them, because a token that isn't selected is refused, just like with HP.
-const marks={busy:false,again:false,err:'',done:0};
+const marks={busy:false,again:false,err:'',done:0,gone:[]};
 const recEnemy=rec=>{const g=findG(rec.gid),e=g&&g.enemies.find(x=>x.id===rec.eid);return {g,e};};
 function queueMark(tokenId,tag,want,name,skipOff){
   const q=state.markQueue||(state.markQueue=[]);
@@ -449,16 +449,17 @@ async function flushMarks(){
   const q=state.markQueue||(state.markQueue=[]);
   if(!q.length){renderMarkLine();return;}
   if(!ext.direct){renderMarkLine();return;}
-  marks.busy=true;marks.err='';marks.done=0;
+  marks.busy=true;marks.err='';marks.done=0;marks.gone=[];
   for(const tag of [...new Set(q.map(x=>x.tag))]){
     const items=q.filter(x=>x.tag===tag);
     state.markQueue=state.markQueue.filter(x=>x.tag!==tag);
     try{
       const d=await r20Send(`!msr-mark {req} m=${encodeURIComponent(tag)} `+items.map(x=>`${x.tokenId}:${x.want?1:0}`).join(' '));
-      const refused=new Set([...(d.notSelected||[]),...(d.missing||[])]);
+      const refused=new Set(d.notSelected||[]),gone=new Set(d.missing||[]);
       (d.results||[]).forEach(res=>{if(res.had&&items.find(x=>x.tokenId===res.id&&x.want))setMarkHad(res.id,tag);});
-      items.forEach(x=>{if(refused.has(x.tokenId))queueMark(x.tokenId,x.tag,x.want,x.name);else marks.done++;});
-      logEv('mark',`${markName(tag)}: sent ${items.length}, refused ${refused.size}`);
+      // A token that isn't on this map can't get an icon by selecting it, so it doesn't wait for Retry.
+      items.forEach(x=>{if(refused.has(x.tokenId))queueMark(x.tokenId,x.tag,x.want,x.name);else if(gone.has(x.tokenId))marks.gone.push(x.name);else marks.done++;});
+      logEv('mark',`${markName(tag)}: sent ${items.length}, refused ${refused.size}, not on map ${gone.size}`);
     }catch(err){
       items.forEach(x=>queueMark(x.tokenId,x.tag,x.want,x.name));
       marks.err=r20Problem(err);
@@ -477,11 +478,12 @@ function setMarkHad(tokenId,tag){
 function renderMarkLine(){
   const el=$('#markLine');if(!el)return;
   const q=state.markQueue||[];
-  const text=marks.err?`❌ ${marks.err}`
+  const goneText=marks.gone.length?` Not on the map you’re looking at, so no icon: ${marks.gone.join(', ')}.`:'';
+  const text=(marks.err?`❌ ${marks.err}`
     :q.length?(ext.direct?`Not selected in Roll20, so the icon wasn’t changed on: ${q.map(x=>x.name).join(', ')}. Select ${q.length===1?'it':'them'} and press Retry.`:`Not linked to Roll20, so the icon wasn’t changed on: ${q.map(x=>x.name).join(', ')}. Click the ⚔️ Mass Save bookmark, select ${q.length===1?'it':'them'} and press Retry.`)
-    :marks.done?`✅ Updated the icon on ${marks.done} token${marks.done===1?'':'s'} in Roll20.`:'';
+    :marks.done?`✅ Updated the icon on ${marks.done} token${marks.done===1?'':'s'} in Roll20.`:'')+goneText;
   el.hidden=!text;if(!text)return;
-  el.className='syncline '+(marks.err||q.length?'blocked':'ok');
+  el.className='syncline '+(marks.err||q.length||goneText?'blocked':'ok');
   el.innerHTML=`<span>🏷️ ${esc(text)}</span>${marks.err||q.length?' <button class="small" data-marksync="retry">Retry</button>':''}`;
 }
 const tokenMarks=s=>String(s||'').split(',').filter(x=>x&&x.split('@')[0]!=='dead');
@@ -554,7 +556,7 @@ function groupHTML(g){
     return `<div class="enemy${e.hp<=0?' dead':''}" data-eid="${e.id}">
       <span class="ehandle" title="Drag onto another card — or below the cards for its own card">⠿</span>
       <input type="checkbox" data-e="target" ${K(e.id+'t')} ${e.target?'checked':''} title="Ticked enemies are the ones that roll">
-      <div><div class="nm">${e.hp<=0?'💀 ':''}${e.tokenId?`<span title="${e.noBar?'Roll20 token (no HP on its bar — not updated)':'Linked to a Roll20 token'}">${e.noBar?'⛓️‍💥':'🔗'}</span> `:''}${esc(label(g,e))} ${lr}${(e.markers||[]).map(x=>`<span title="${esc(markName(x.split('@')[0]))} in Roll20">${markIcon(x.split('@')[0])}</span>`).join('')}</div><div class="bar ${cls}"><i style="width:${pct}%"></i></div></div>
+      <div><div class="nm">${e.hp<=0?'💀 ':''}${e.tokenId?`<span title="${e.noBar?'Roll20 token (no HP on its bar — not updated)':'Linked to a Roll20 token'}">${e.noBar?'⛓️‍💥':'🔗'}</span> `:''}${esc(label(g,e))} ${lr}${e.gone?'<span class="warn" title="This token isn’t on the map you’re looking at in Roll20. It may be on another map, or it was deleted. Roll20 won’t be updated for it from this map."> ⚠️ not on this map</span>':''}${(e.markers||[]).map(x=>`<span title="${esc(markName(x.split('@')[0]))} in Roll20">${markIcon(x.split('@')[0])}</span>`).join('')}</div><div class="bar ${cls}"><i style="width:${pct}%"></i></div></div>
       <div class="ectl">
         <input type="number" data-e="hp" ${K(e.id+'h')} value="${e.hp}" title="Current HP"><span class="muted">/</span>
         <input type="number" data-e="max" ${K(e.id+'m')} value="${e.max}" title="Max HP">
@@ -1453,6 +1455,8 @@ function refreshTokens(why){
       const d=await r20Send(`!msr-get {req} bar=${state.rules.r20Bar}${tb?` tbar=${tb}`:''} `+ids.map(id=>id+':0').join(' '));
       let hp=0,other=0;
       (d.tokens||[]).forEach(t=>{const r=applyRoll20Values(t);if(r.hpChanged)hp++;else if(r.named)other++;});
+      const gone=new Set(d.missing||[]);
+      tokenEnemies().forEach(({e})=>{const g=gone.has(e.tokenId);if(!!e.gone!==g){e.gone=g;other++;}});
       if(hp)lockLast();
       if(hp||other){save();renderGroups();renderResults();}
       if(hp){logEv('refresh',`${why}: ${hp} token(s) had new HP in Roll20`);toast(`Updated ${hp} enem${hp===1?'y':'ies'} with HP changed in Roll20.`);}
