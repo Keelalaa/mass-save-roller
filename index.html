@@ -110,6 +110,10 @@ header .sp{flex:1}
 .r20box>label{display:flex;gap:8px;align-items:center;margin:4px 0}
 .r20box .sub{margin-left:26px}
 .r20box.off .sub{display:none}
+.visbox{border-top:1px solid var(--line);margin-top:8px;padding-top:4px}
+.visrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:6px 0}
+.visrow .nm{font-weight:600;min-width:48px}
+#visBars{display:flex;flex-wrap:wrap;gap:4px 10px}#visBars label{display:flex;gap:4px;align-items:center}
 .bmlink{display:inline-block;background:linear-gradient(#e2bb63,#b98d34);color:#1b1408!important;font-weight:800;padding:4px 10px;border-radius:7px;text-decoration:none;cursor:grab;margin:4px 0}
 .r20box details{margin-top:6px}.r20box ol{padding-left:18px;margin:6px 0}.r20box a{color:var(--gold2)}
 .ok{color:var(--pass)}.bad{color:var(--fail)}.warn{color:var(--warn)}
@@ -205,6 +209,11 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
         <label class="sub hpopt">Temp HP is on bar <select id="r20TBar"><option value="">Not used</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
         <label class="sub hpopt"><input type="checkbox" id="r20Dead"> Mark tokens at 0 HP as dead</label>
         <label class="sub" title="When tokens are added to a card, ones with no name or a shared name get numbered in Roll20. Never changes Nameplate or what players can see."><input type="checkbox" id="r20Name"> Number token names when added to a card</label>
+        <div class="sub visbox" id="visBox">
+          <div class="hint">Let players see, on the tokens selected in Roll20:</div>
+          <div class="visrow"><span class="nm" title="The See box behind the ⋮ next to General in Token Settings">Names</span><button class="small" id="visNameShow" title="Players can see the name on each selected token. Also ticks Nameplate.">Show to players</button><button class="small" id="visNameHide" title="Players stop seeing the name. You still see it.">Hide</button></div>
+          <div class="visrow"><span class="nm" title="The See box behind the ⋮ next to each bar in Token Settings">Bars</span><span id="visBars"></span><button class="small" id="visBarShow" title="Players can see the ticked bars on each selected token.">Show to players</button><button class="small" id="visBarHide" title="Players stop seeing the ticked bars. You still see them.">Hide</button></div>
+        </div>
         <div id="r20Status" class="hint"></div>
         <details class="hint"><summary>How to link Roll20 (get the bookmark)</summary>
           <ol>
@@ -254,6 +263,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
     <div class="panel">
       <h2>Enemies <span class="sp"></span><button id="undoEdit" class="small" disabled>↩ Undo</button><button id="redoEdit" class="small" disabled>↪ Redo</button><button id="toggleAll" class="small" title="Minimize or expand every card">Minimize all</button><button id="addGroup" class="primary small">+ Add enemy group</button></h2>
       <div class="hint">Each group is one kind of monster (e.g. 6 Goblins). Select the tokens caught in the spell in Roll20 and their rows tick by themselves, or tick rows by hand. Click a damage type to cycle: <span class="chip resist">resistant</span> <span class="chip immune">immune</span> <span class="chip vuln">vulnerable</span>.</div>
+      <div class="row givetemp"><label for="giveTemp"><span class="lbl">Temp HP for ticked rows</span></label><input type="number" id="giveTemp" min="0" placeholder="10" style="width:80px" title="How much temp HP each ticked enemy gets"><button class="small" id="giveTempBtn" title="Sets each ticked enemy's temp HP, and the max on its temp bar in Roll20. No need to select them in Roll20.">Give temp HP</button><span class="hint">Every ticked row gets this much temp HP. Their temp bar's max in Roll20 is set to it too.</span></div>
       <div id="groups"></div>
     </div>
   </section>
@@ -263,7 +273,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.9.3';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.10.0';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -384,6 +394,7 @@ function renderRollBtn(){
 }
 function renderR20(){
   const on=state.rules.roll20;
+  renderVis();
   $('.r20box').classList.toggle('off',!on);
   $('.r20box').classList.toggle('nohp',!state.rules.r20Hp);
   $('#groups').classList.toggle('r20',on&&state.rules.r20Hp);
@@ -396,6 +407,50 @@ function renderR20(){
     :ext.direct?`<span class="ok">✅ Linked to Roll20</span>`
     :ext.roll20Open?`<span class="ok">✅ Add-on connected · Roll20 game open</span>`+(!state.rules.r20Hp?'':ext.script==='ok'?' <span class="ok">· HP link ready</span>':ext.script==='checking'?' · checking the HP link…':ext.script==='missing'?`<br><span class="warn">⚠️ The HP link isn’t set up in this Roll20 game yet.</span> <button class="small" data-setup>Set it up (one time)</button> <button class="small" data-recheck>Check again</button>`:'')
     :`<span class="warn">⚠️ Add-on connected, but no Roll20 game is open in this Chrome.</span>`;
+}
+// ---------- temp HP for every ticked row ----------
+function giveTemp(){
+  const raw=$('#giveTemp').value.trim(),n=Math.max(0,num(raw,NaN));
+  if(raw===''||Number.isNaN(n)){toast('Type how much temp HP to give first.');return;}
+  const list=state.groups.flatMap(g=>g.enemies.filter(e=>e.target));
+  if(!list.length){toast('Tick the enemies to give temp HP to first.');return;}
+  snap(`${n} temp HP for ${list.length} ticked`);
+  list.forEach(e=>{e.temp=n;e.tempMax=n;if(e.tokenId)e.direct=true;});
+  lockLast();save();renderGroups();
+  logEv('givetemp',`${n} to ${list.length}`);
+  const toR20=state.rules.roll20&&state.rules.r20Hp&&list.some(e=>e.tokenId);
+  toast(`Gave ${list.length} enem${list.length===1?'y':'ies'} ${n} temp HP.`+(toR20&&!tempBar()?' Pick a Temp HP bar in the Roll20 box to send it to Roll20 too.':''),'Undo',undoEdit);
+}
+// ---------- what players can see: names and bars of the selected tokens ----------
+// The bars ticked here, as '1'–'3'. Until the GM picks, it's the HP bar.
+function visBars(){const l=state.rules.visBars;return Array.isArray(l)?l.filter(n=>/^[123]$/.test(n)):[state.rules.r20Bar];}
+function renderVis(){
+  const box=$('#visBars');if(!box||box.contains(document.activeElement))return;
+  const on=visBars(),t=tempBar();
+  box.innerHTML=['1','2','3'].map(n=>`<label><input type="checkbox" data-visbar="${n}" ${on.includes(n)?'checked':''}> Bar ${n}${n===state.rules.r20Bar?' (HP)':n===t?' (temp HP)':''}</label>`).join('');
+}
+const verAtLeast=(v,min)=>{const a=String(v||'0').split('.').map(Number),b=min.split('.').map(Number);for(let i=0;i<3;i++){if((a[i]||0)!==b[i])return (a[i]||0)>b[i];}return true;};
+// Show asks for a second click first, so a stray click can't reveal anything. Undo puts each token
+// back exactly as it was, even if it's no longer selected.
+async function setVisibility(kind,on,btn){
+  const bars=visBars();
+  if(kind==='bars'&&!bars.length){toast('Tick at least one bar first.');return;}
+  if(!ext.direct){toast('Not linked to Roll20 — click the ⚔️ Mass Save bookmark in your Roll20 game first.');return;}
+  if(!verAtLeast(ext.version,'2.4.0')){toast('Click the ⚔️ Mass Save bookmark in Roll20 once to update the link, then try again.');return;}
+  if(on&&!armed(btn,'Click again to show'))return;
+  const what=kind==='name'?'name':bars.map(n=>'b'+n).join('.');
+  let d;
+  try{d=await r20Send(`!msr-vis {req} v=${on?1:0} what=${what}`);}
+  catch(err){toast(r20Problem(err));return;}
+  const n=d.changed||0,prev=d.prev||[];
+  logEv('vis',`${on?'show':'hide'} ${what} on ${n}`);
+  if(!n){toast('Select the tokens in Roll20 first, then click this again.');return;}
+  const label=kind==='name'?(n===1?'the name':'the names'):bars.length===1?`bar ${bars[0]}`:`bars ${bars.join(' and ')}`;
+  const tokens=`${n} token${n===1?'':'s'}`;
+  toast(on?`Players can now see ${label} on ${tokens}.`:`Players can no longer see ${label} on ${tokens}.`,'Undo',async()=>{
+    try{const r=await r20Send('!msr-vis {req} what=restore '+prev.join(' '));logEv('vis','undo on '+r.changed);toast(`Put back as it was on ${r.changed} token${r.changed===1?'':'s'}.`);}
+    catch(err){toast(r20Problem(err));}
+  });
 }
 // ---------- lasting condition: a Roll20 status icon on tokens that failed the save ----------
 // The icons come from the Roll20 game once linked. Until then, this list gives their names.
@@ -553,15 +608,22 @@ function bindSpell(){
   $('#r20Bar').addEventListener('change',e=>{state.rules.r20Bar=e.target.value;
     state.groups.forEach(g=>g.enemies.forEach(x=>{if(x.tokenId&&!x.needInit)x.synced=null;}));setTimeout(()=>refreshTokens('HP bar changed'),0);
     if(state.rules.r20TBar===e.target.value){state.rules.r20TBar='';$('#r20TBar').value='';toast('HP and temp HP can’t share a bar — temp HP set to “Not used”.');}
-    save();});
+    save();renderVis();});
   $('#r20TBar').addEventListener('change',e=>{
     if(e.target.value&&e.target.value===state.rules.r20Bar){e.target.value=state.rules.r20TBar||'';toast('That’s the HP bar — pick a different bar for temp HP.');return;}
     state.rules.r20TBar=e.target.value;
     // forget the old temp bar's values and read the new bar for every linked token right away
     state.groups.forEach(g=>g.enemies.forEach(x=>{if(x.tokenId)x.syncedTemp=null;}));
-    save();if(e.target.value)refreshTokens('temp bar set');});
+    save();renderVis();if(e.target.value)refreshTokens('temp bar set');});
   $('#r20Dead').addEventListener('change',e=>{state.rules.r20Dead=e.target.checked;save();});
   $('#r20Name').addEventListener('change',e=>{state.rules.r20Name=e.target.checked;save();});
+  $('#visBars').addEventListener('change',e=>{const n=e.target.dataset.visbar;if(!n)return;const l=visBars().filter(x=>x!==n);if(e.target.checked)l.push(n);state.rules.visBars=l.sort();save();});
+  $('#giveTempBtn').addEventListener('click',giveTemp);
+  $('#giveTemp').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();giveTemp();}});
+  $('#visNameShow').addEventListener('click',e=>setVisibility('name',true,e.currentTarget));
+  $('#visNameHide').addEventListener('click',e=>setVisibility('name',false,e.currentTarget));
+  $('#visBarShow').addEventListener('click',e=>setVisibility('bars',true,e.currentTarget));
+  $('#visBarHide').addEventListener('click',e=>setVisibility('bars',false,e.currentTarget));
   $('#r20Status').addEventListener('click',e=>{if(e.target.dataset.setup!=null){window.postMessage({source:'msr-page',type:'setup'},location.origin);toast('Opening your game’s Mod Scripts page — click “Install it for me” in the box there.');}
     else if(e.target.dataset.recheck!=null)checkScript(true);});
   $('#syncLine').addEventListener('click',e=>{if(e.target.dataset.sync==='retry')runSync(true);});
@@ -715,9 +777,9 @@ function restoreGroups(json){
   gs.forEach(g=>g.enemies.forEach(e=>{
     const c=e.tokenId&&cur.get(e.tokenId);if(!c)return;
     // what Roll20 has now stays the starting point, so only the difference is sent
-    e.synced=c.synced;e.syncedTemp=c.syncedTemp;e.blocked=c.blocked;e.needInit=c.needInit;
+    e.synced=c.synced;e.syncedTemp=c.syncedTemp;e.syncedTempMax=c.syncedTempMax;e.blocked=c.blocked;e.needInit=c.needInit;
     if(e.max!==c.max&&e.synced!=null){e.needInit=true;}   // e.g. undoing "Reset all HP": put max back too
-    e.direct=e.needInit||(e.synced!=null&&e.hp!==e.synced)||(e.syncedTemp!=null&&(e.temp||0)!==e.syncedTemp);   // undoing a hand edit is a hand edit
+    e.direct=e.needInit||(e.synced!=null&&e.hp!==e.synced)||(e.syncedTemp!=null&&(e.temp||0)!==e.syncedTemp)||(e.tempMax!=null&&e.tempMax!==e.syncedTempMax);   // undoing a hand edit is a hand edit
   }));
   state.groups=gs;
 }
@@ -1549,7 +1611,7 @@ function mergeTokens(tokens,g){
     // Image tokens often have an empty HP bar: they get "HP each" and Roll20's bar is filled in.
     const hasHp=t.hp!=null;if(!hasHp)noHp++;
     const hp=hasHp?Math.max(0,t.hp):rollHp(g.hp);
-    return {id:prev?prev.id:uid(),n:i+1,tname:String(t.name||'').trim(),hp,max:Math.max(t.max||0,hp),temp:t.temp!=null?Math.max(0,t.temp):(prev?prev.temp:0),syncedTemp:t.temp!=null?Math.max(0,t.temp):null,lrLeft:prev?prev.lrLeft:g.lr,
+    return {id:prev?prev.id:uid(),n:i+1,tname:String(t.name||'').trim(),hp,max:Math.max(t.max||0,hp),temp:t.temp!=null?Math.max(0,t.temp):(prev?prev.temp:0),syncedTemp:t.temp!=null?Math.max(0,t.temp):null,tempMax:t.tempMax!=null?t.tempMax:(prev?prev.tempMax:null),syncedTempMax:t.tempMax!=null?t.tempMax:null,lrLeft:prev?prev.lrLeft:g.lr,
       target:true,tokenId:t.id,synced:hasHp?hp:null,needInit:!hasHp,noBar:false,blocked:false,markers:tokenMarks(t.markers)};
   });
   // Rows stay where they were, and new tokens join the end, left → right.
@@ -1587,14 +1649,28 @@ async function runSync(retry){
     }catch(err){sync.busy=false;sync.state='fail';sync.text='❌ '+r20Problem(err);save();renderSync();return;}
     sync.busy=false;
   }
-  // HP (and temp HP, if a temp bar is chosen) are sent as changes since Roll20 last agreed.
+  // A temp HP given to ticked rows also sets the temp bar's max, so both go together as exact values.
   const tbar=tempBar();
+  const tmax=tbar?tokenEnemies().filter(({e})=>e.tempMax!=null&&e.tempMax!==e.syncedTempMax&&(retry||!e.blocked)):[];
+  if(tmax.length){
+    sync.busy=true;sync.state='sending';sync.text=`Setting temp HP on ${tmax.length} token${tmax.length===1?'':'s'} in Roll20…`;renderSync();
+    tmax.forEach(({e})=>{inflight.set(e.tokenId+'temp',e.temp||0);inflight.set(e.tokenId+'tmax',e.tempMax);});
+    try{
+      const d=await r20Send(`!msr-init {req} bar=${tbar} any=1 `+tmax.map(({e})=>`${e.tokenId}:${e.temp||0}~${Math.max(e.tempMax,e.temp||0)}`).join(' '));
+      const refused=new Set(d.notSelected||[]);
+      tmax.forEach(({e})=>{if(refused.has(e.tokenId))e.blocked=true;else{e.tempMax=Math.max(e.tempMax,e.temp||0);e.syncedTempMax=e.tempMax;e.syncedTemp=e.temp||0;e.blocked=false;}});
+      logEv('tempmax',`set ${tmax.length-refused.size}, refused ${refused.size}`);
+    }catch(err){sync.busy=false;sync.state='fail';sync.text='❌ '+r20Problem(err);save();renderSync();return;}
+    finally{tmax.forEach(({e})=>{inflight.delete(e.tokenId+'temp');inflight.delete(e.tokenId+'tmax');});}
+    sync.busy=false;
+  }
+  // HP (and temp HP, if a temp bar is chosen) are sent as changes since Roll20 last agreed.
   const list=tokenEnemies().filter(({e})=>e.synced!=null&&e.hp!==e.synced&&(retry||!e.blocked));
   const tlist=tbar?tokenEnemies().filter(({e})=>e.syncedTemp!=null&&(e.temp||0)!==e.syncedTemp&&(retry||!e.blocked)):[];
   const stillBlocked=tokenEnemies().filter(({e})=>e.blocked).length;
   const nothing=!list.length&&!tlist.length;
   // A hand edit stays "by hand" only until Roll20 has it, so a later roll still needs the token selected.
-  const settleDirect=()=>tokenEnemies().forEach(({e})=>{if(e.direct&&!e.needInit&&!e.blocked&&e.synced===e.hp&&(!tbar||e.syncedTemp==null||(e.temp||0)===e.syncedTemp))e.direct=false;});
+  const settleDirect=()=>tokenEnemies().forEach(({e})=>{if(e.direct&&!e.needInit&&!e.blocked&&e.synced===e.hp&&(!tbar||e.syncedTemp==null||(e.temp||0)===e.syncedTemp)&&(e.tempMax==null||e.tempMax===e.syncedTempMax))e.direct=false;});
   const refusedText=l=>{
     const off=l.filter(e=>!e.direct),gone=l.filter(e=>e.direct);
     return (off.length?`Not selected in Roll20, so NOT changed: ${off.map(enemyLabel).join(', ')}. Select ${off.length===1?'it':'them'} and press Retry. `:'')
@@ -1602,6 +1678,7 @@ async function runSync(retry){
   };
   if(nothing)settleDirect();
   if(nothing&&stillBlocked){sync.state='blocked';sync.text=refusedText(tokenEnemies().filter(({e})=>e.blocked).map(({e})=>e));save();renderSync();return;}
+  if(nothing&&tmax.length&&!inits.length&&!stillBlocked){sync.state='ok';sync.text=`✅ Set temp HP on ${tmax.length} token${tmax.length===1?'':'s'} in Roll20.`;save();renderSync();return;}
   if(nothing&&inits.length){sync.state='ok';sync.text=`✅ Set HP on ${inits.length} token${inits.length===1?'':'s'} in Roll20.`;save();renderSync();return;}
   if(nothing){if(retry){sync.state='ok';sync.text='Roll20 tokens are up to date.';renderSync();}return;}
   const count=new Set([...list,...tlist].map(x=>x.e)).size;
@@ -1660,6 +1737,10 @@ function applyRoll20Values(t){
     if(tb&&t.temp!=null&&e.syncedTemp==null){e.temp=Math.max(0,t.temp);e.syncedTemp=t.temp;named=true;}
     else if(tb&&t.temp!=null&&e.syncedTemp!=null&&!inflight.has(t.id+'temp')&&t.temp!==e.syncedTemp){
       const unsent=e.syncedTemp-(e.temp||0);e.syncedTemp=t.temp;e.temp=Math.max(0,t.temp-unsent);hpChanged=true;
+    }
+    if(tb&&t.tempMax!=null&&!inflight.has(t.id+'tmax')){
+      if(e.tempMax==null||e.tempMax===e.syncedTempMax){if(e.tempMax!==t.tempMax)named=true;e.tempMax=t.tempMax;}
+      e.syncedTempMax=t.tempMax;
     }
   }));
   return {hpChanged,named};

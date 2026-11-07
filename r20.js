@@ -3,7 +3,7 @@
 // HP of tokens on the GM's command. Safety rule: rolls only ever change tokens that are selected in
 // Roll20 at that moment. Nothing is installed; reloading Roll20 removes it.
 (function () {
-  const VERSION = '2.3.2';
+  const VERSION = '2.4.0';
   const SITE = 'https://mass-save-roller.vercel.app';
   const TAG = '[Mass Save link]';
 
@@ -129,7 +129,7 @@
     const parts = String(text).trim().split(/\s+/), cmd = parts[0], req = parts[1] || '';
     const opts = {}, pairs = [];
     parts.slice(2).forEach(p => {
-      const eq = /^(bar|dead|tbar|empty0|open|sel|m|any)=([\w%.-]+)$/.exec(p);
+      const eq = /^(bar|dead|tbar|empty0|open|sel|m|any|v|what)=([\w%.-]+)$/.exec(p);
       if (eq) { opts[eq[1]] = eq[2]; return; }
       const i = p.lastIndexOf(':');
       // "id:number" or, for !msr-init, "id:hp~max"
@@ -157,7 +157,7 @@
         const m = graphics.get(p.id);
         if (!m) { missing.push(p.id); return; }
         const b = readBar(m, bar), t = tbar ? readBar(m, tbar) : null;
-        tokens.push({ id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max, temp: t ? (t.cur || 0) : null, markers: m.get('statusmarkers') || '' });
+        tokens.push({ id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max, temp: t ? (t.cur || 0) : null, tempMax: t ? t.max : null, markers: m.get('statusmarkers') || '' });
       });
       reply('GET', { tokens, missing });
       return;
@@ -172,6 +172,40 @@
 
     const sel = selectedGraphics();
     const selById = new Map(sel.map(m => [m.id, m]));
+
+    // !msr-vis v=1|0 what=name or what=b1.b3 lets players see, or stops them seeing, the names or bars
+    // of the SELECTED tokens: the See boxes behind the ⋮ next to General and next to each bar. Showing a
+    // name also ticks Nameplate, since players can't see a name the token doesn't show. Hiding never
+    // touches Nameplate, so the GM keeps seeing it. Answers with what each token had before, and Undo
+    // sends that back as what=restore id:key=0.key=1, which only ever writes these few settings.
+    if (cmd === '!msr-vis') {
+      const KEYS = ['showname', 'showplayers_name', 'showplayers_bar1', 'showplayers_bar2', 'showplayers_bar3'];
+      if (opts.what === 'restore') {
+        const graphics = Campaign.activePage().thegraphics, missing = [];
+        let changed = 0;
+        pairs.forEach(p => {
+          const m = graphics.get(p.id);
+          if (!m) { missing.push(p.id); return; }
+          const ch = {};
+          p.raw.split('.').forEach(kv => { const [k, v] = kv.split('='); if (KEYS.includes(k)) ch[k] = v === '1'; });
+          m.save(ch); changed++;
+        });
+        reply('VIS', { changed, missing, prev: [] });
+        return;
+      }
+      const want = String(opts.what || '').split('.'), on = opts.v === '1', keys = [];
+      if (want.includes('name')) keys.push('showname', 'showplayers_name');
+      ['1', '2', '3'].forEach(n => { if (want.includes('b' + n)) keys.push('showplayers_bar' + n); });
+      const prev = [];
+      if (keys.length) sel.forEach(m => {
+        prev.push(m.id + ':' + keys.map(k => k + '=' + (m.get(k) ? 1 : 0)).join('.'));
+        const ch = {};
+        keys.forEach(k => { if (k !== 'showname') ch[k] = on; else if (on) ch.showname = true; });
+        m.save(ch);
+      });
+      reply('VIS', { changed: keys.length ? sel.length : 0, prev });
+      return;
+    }
 
     // !msr-name id:name renames a selected token. It only ever saves the name: Nameplate and the
     // players' See permission are the GM's, so the link never writes them. Answers with each
@@ -191,7 +225,7 @@
     if (cmd === '!msr-sel') {
       reply('SEL', { used: Campaign.activePage().thegraphics.models.map(m => String(m.get('name') || '').trim()).filter(Boolean), tokens: sel.map(m => {
         const b = readBar(m, bar), t = tbar ? readBar(m, tbar) : null;
-        return { id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max, temp: t ? (t.cur || 0) : null,
+        return { id: m.id, name: m.get('name') || '', hp: b.cur, max: b.max, temp: t ? (t.cur || 0) : null, tempMax: t ? t.max : null,
           markers: m.get('statusmarkers') || '', x: +m.get('left') || 0, y: +m.get('top') || 0 };   // map position, so the site can order left → right
       }) });
       return;
