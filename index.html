@@ -103,6 +103,13 @@ header .sp{flex:1}
 .tag{font-size:11px;color:var(--muted);display:block}
 .down{color:var(--fail);font-weight:700}
 .tablewrap{overflow-x:auto}
+.logs>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px}.logs>summary::-webkit-details-marker{display:none}
+.logs>summary:before{content:'▸';color:var(--gold2);transition:transform .15s}.logs[open]>summary:before{transform:rotate(90deg)}
+.logtitle{font-size:17px;font-weight:700;color:var(--gold2)}
+.logitem{border:1px solid var(--line);border-radius:8px;margin:8px 0;background:#1b1722}
+.logitem>summary{cursor:pointer;padding:8px 10px;display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px}
+.logitem>summary .ln{font-weight:700;flex:1;min-width:0}.logitem .lbody{padding:0 10px 10px}
+.logitem .lv{display:inline-block;min-width:22px;font-weight:600}
 .history{font-size:13px;color:var(--muted);margin:0;padding-left:18px}
 .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#33283d;border:1px solid var(--gold);padding:10px 16px;border-radius:8px;z-index:99;max-width:90vw;box-shadow:0 6px 20px #0008}
 .locked{font-size:12px;color:var(--warn)}
@@ -233,14 +240,14 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
     </div>
 
     <div class="panel">
-      <h2>Results <span class="sp"></span><button id="undoBtn" class="small" hidden>↩ Undo roll</button><button id="redoBtn" class="small" hidden>↪ Redo roll</button><button id="clearResults" class="small" hidden title="Hide this result. Nobody's HP changes; the roll stays in History.">✕ Clear</button></h2>
+      <h2>Results <span class="sp"></span><button id="undoBtn" class="small" hidden>↩ Undo roll</button><button id="redoBtn" class="small" hidden>↪ Redo roll</button><button id="clearResults" class="small" hidden title="Hide this result. Nobody's HP changes; the roll stays in History.">✕ Clear</button><button id="logResults" class="small" hidden title="Keep this result in Logs at the bottom of the page, and clear it from here">📁 Save to log</button></h2>
       <div id="syncLine" hidden></div>
       <div id="markLine" hidden></div>
       <div id="results"></div>
     </div>
 
     <div class="panel" id="initPanel">
-      <h2>Initiative <span class="sp"></span><button id="initUndo" class="small" hidden>↩ Undo</button><button id="initRedo" class="small" hidden>↪ Redo</button><button id="initClear" class="small" hidden title="Hide this list. Roll20's Turn Order stays as it is.">✕ Clear</button></h2>
+      <h2>Initiative <span class="sp"></span><button id="initUndo" class="small" hidden>↩ Undo</button><button id="initRedo" class="small" hidden>↪ Redo</button><button id="initClear" class="small" hidden title="Hide this list. Roll20's Turn Order stays as it is.">✕ Clear</button><button id="initLog" class="small" hidden title="Keep this list in Logs at the bottom of the page, and clear it from here">📁 Save to log</button></h2>
       <div id="initBonus"></div>
       <button id="initBtn" class="primary big">⚡ Roll initiative</button>
       <div class="hint" id="initHint"></div>
@@ -257,6 +264,11 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
       <ol id="history" class="history"></ol>
       <div class="row" style="margin-top:12px"><label><input type="checkbox" id="natRule"> House rule: natural 20 always passes, natural 1 always fails</label></div>
     </div>
+    <details class="panel logs" id="logsPanel">
+      <summary><span class="logtitle">Logs</span> <span class="muted" id="logCount"></span></summary>
+      <div class="hint">Results and initiative lists you saved. Click one to open it.</div>
+      <div id="logList"></div>
+    </details>
   </section>
 
   <section>
@@ -273,7 +285,7 @@ button.copycmd{font-weight:800;border-color:var(--gold);margin:0 2px}
 'use strict';
 const DMG_TYPES=['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
 const ABILS=['str','dex','con','int','wis','cha'];
-const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.10.0';
+const STORE_KEY='massSave.v1', OPEN_KEY='massSave.closed.v1', SITE_VERSION='1.11.0';
 // Private diagnostic log (api/log.js) so problems on the DM's computer can be looked into remotely.
 // Only records what the app did — dice, counts, errors — never anything personal.
 const LOG_SID=(()=>{try{let s=localStorage.getItem('massSave.sid');if(!s){s=Math.random().toString(36).slice(2,10);localStorage.setItem('massSave.sid',s);}return s;}catch(e){return 'nostore';}})();
@@ -407,6 +419,69 @@ function renderR20(){
     :ext.direct?`<span class="ok">✅ Linked to Roll20</span>`
     :ext.roll20Open?`<span class="ok">✅ Add-on connected · Roll20 game open</span>`+(!state.rules.r20Hp?'':ext.script==='ok'?' <span class="ok">· HP link ready</span>':ext.script==='checking'?' · checking the HP link…':ext.script==='missing'?`<br><span class="warn">⚠️ The HP link isn’t set up in this Roll20 game yet.</span> <button class="small" data-setup>Set it up (one time)</button> <button class="small" data-recheck>Check again</button>`:'')
     :`<span class="warn">⚠️ Add-on connected, but no Roll20 game is open in this Chrome.</span>`;
+}
+// ---------- saved logs ----------
+// A saved log is a frozen copy of the table as it looked, named after the cards in it, like
+// "Cats DEX saves". Numbers in boxes become plain text and buttons are left out.
+function freezeTable(box){
+  const t=box.querySelector('table');if(!t)return '';
+  const c=t.cloneNode(true);
+  c.querySelectorAll('input').forEach(i=>{const sp=document.createElement('span');sp.className='lv';sp.textContent=i.value;i.replaceWith(sp);});
+  c.querySelectorAll('button').forEach(b=>b.remove());
+  return c.outerHTML;
+}
+function cardNames(gids){
+  const want=new Set(gids),names=state.groups.filter(g=>want.has(g.id)).map(g=>String(g.name||'').trim()).filter(Boolean);   // in card order, top to bottom
+  if(!names.length)return 'Enemies';
+  return names.length>3?`${names.slice(0,2).join(', ')} + ${names.length-2} more`:names.length===1?names[0]:names.slice(0,-1).join(', ')+' and '+names[names.length-1];
+}
+function addLog(entry){
+  const l=state.savedLogs||(state.savedLogs=[]);
+  l.unshift(Object.assign({id:uid(),at:Date.now()},entry));
+  if(l.length>200)l.length=200;
+}
+function saveResultsLog(){
+  const L=state.last;if(!L)return;
+  const sum=L.sum||{passN:0,failN:0,downN:0,dmgT:0};
+  const name=`${cardNames(L.recs.map(r=>r.gid))} ${L.spell.ability.toUpperCase()} saves`;
+  const note=`DC ${L.spell.dc} · ${sum.failN} failed, ${sum.passN} passed, ${sum.downN} dropped, ${sum.dmgT} damage`+(L.dmg&&L.dmg.length?` · ${L.dmg.map(p=>p.total+(p.type?' '+p.type:'')).join(' + ')} rolled`:'');
+  snapResults('save results to log');
+  addLog({kind:'save',name,note,html:freezeTable($('#results'))});
+  state.last=null;state.redo=null;save();renderResults();
+  toast(`Saved to Logs as “${name}”.`,'Undo',undoEdit);
+  logEv('log','saved '+name);
+}
+function saveInitLog(){
+  const L=state.lastInit;if(!L)return;
+  const name=`${cardNames(L.rows.map(r=>r.gid))} initiative rolls`;
+  const note=`${L.rows.length} rolled`+(L.rows[0]?` · highest ${enemyLabelById(L.rows[0])} ${initTotal(L.rows[0])}`:'');
+  snapResults('save initiative to log');
+  addLog({kind:'init',name,note,html:freezeTable($('#initBox'))});
+  state.lastInit=null;state.initHidden=true;save();renderResults();
+  toast(`Saved to Logs as “${name}”. Roll20’s Turn Order wasn’t changed.`,'Undo',undoEdit);
+  logEv('log','saved '+name);
+}
+let logSig='';
+function renderLogs(){
+  const l=state.savedLogs||[],list=$('#logList');if(!list)return;
+  $('#logCount').textContent=l.length?`(${l.length})`:'(none yet)';
+  const sig=l.map(x=>x.id+x.name).join('|');if(sig===logSig)return;logSig=sig;
+  const open=new Set([...list.querySelectorAll('details[open]')].map(d=>d.dataset.log));
+  const when=t=>new Date(t).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+  list.innerHTML=l.map(x=>`<details class="logitem" data-log="${x.id}"${open.has(x.id)?' open':''}><summary><span class="ln">${esc(x.name)}</span><span class="muted">${esc(when(x.at))}</span><button class="small danger" data-dellog="${x.id}" title="Delete this log">✕</button></summary><div class="lbody"><div class="hint">${esc(x.note||'')}</div><div class="tablewrap">${x.html||''}</div></div></details>`).join('')||'<div class="hint">Nothing saved yet. Use 📁 Save to log on a result or an initiative list.</div>';
+}
+function bindLogs(){
+  $('#logResults').addEventListener('click',saveResultsLog);
+  $('#initLog').addEventListener('click',saveInitLog);
+  $('#logList').addEventListener('click',ev=>{
+    const b=ev.target.closest('[data-dellog]');if(!b)return;
+    ev.preventDefault();ev.stopPropagation();
+    if(!armed(b,'Delete?'))return;
+    const x=(state.savedLogs||[]).find(y=>y.id===b.dataset.dellog);if(!x)return;
+    snapResults(`delete log “${x.name}”`);
+    state.savedLogs=state.savedLogs.filter(y=>y!==x);save();renderLogs();
+    toast(`Deleted “${x.name}”.`,'Undo',undoEdit);
+  });
 }
 // ---------- temp HP for every ticked row ----------
 function giveTemp(){
@@ -654,7 +729,7 @@ function renderGroups(){
 }
 function groupHTML(g){
   const up=g.enemies.filter(e=>e.hp>0).length, K=f=>`data-k="${g.id}-${f}"`;
-  const saves=ABILS.map(a=>`<label>${a.toUpperCase()}<input type="number" data-save="${a}" ${K(a)} value="${g.saves[a]}"></label>`).join('');
+  const saves=ABILS.map(a=>`<label>${a.toUpperCase()}<input type="number" data-save="${a}" ${K(a)} value="${g.saves[a]}" title="${a.toUpperCase()} save bonus from the stat block, like 2 or -1. Not the score."></label>`).join('');
   const chips=DMG_TYPES.map(d=>`<button class="chip ${g.dmg[d]||''}" data-act="chip" data-type="${d}" title="${g.dmg[d]||'normal'}">${d}</button>`).join('');
   const enemies=g.enemies.map(e=>{
     const pct=e.max>0?clamp(e.hp/e.max*100,0,100):0, cls=pct<=25?'low':pct<=50?'mid':'';
@@ -691,7 +766,7 @@ function groupHTML(g){
         <label><span class="lbl">Initiative +</span><input data-f="init" ${K('init')} type="number" value="${num(g.init,0)||''}" style="width:64px" placeholder="0" title="Added to each of this group's initiative rolls. Can be negative."></label>
         <button class="small" data-act="resethp" title="Give every enemy in this group fresh HP">Reset all HP</button>
       </div>
-      <div class="lbl">Saving throw modifiers</div>
+      <div class="lbl" title="Use the Save column of the stat block. DEX 14 with no proficiency is +2, so type 2. Never type the score itself.">Save bonuses: the + number, like 2 for DEX 14 (not the score)</div>
       <div class="saves">${saves}</div>
       <div class="opts">
         <label><select data-f="adv" ${K('adv')}><option value="normal">Normal saves</option><option value="adv"${g.adv==='adv'?' selected':''}>Advantage on all saves</option><option value="dis"${g.adv==='dis'?' selected':''}>Disadvantage on all saves</option></select></label>
@@ -784,7 +859,7 @@ function restoreGroups(json){
   state.groups=gs;
 }
 // Clearing the results / history is undoable too (those entries hold the results, not the cards).
-const resultsCopy=()=>JSON.stringify({last:state.last,redo:state.redo||null,log:state.log,lastInit:state.lastInit||null});
+const resultsCopy=()=>JSON.stringify({last:state.last,redo:state.redo||null,log:state.log,lastInit:state.lastInit||null,savedLogs:state.savedLogs||[],initHidden:!!state.initHidden});
 function snapResults(what){
   undoStack.push({what,results:resultsCopy()});
   if(undoStack.length>40)undoStack.shift();
@@ -809,7 +884,7 @@ async function swapNames(s,other){
 function swapIn(s,other){
   if(s.init!==undefined){swapInit(s,other);return;}
   if(s.names&&s.names.length){swapNames(s,other);return;}
-  if(s.results){other.push({what:s.what,results:resultsCopy()});const r=JSON.parse(s.results);state.last=r.last;state.redo=r.redo;state.log=r.log;state.lastInit=r.lastInit;save();renderResults();}
+  if(s.results){other.push({what:s.what,results:resultsCopy()});const r=JSON.parse(s.results);state.last=r.last;state.redo=r.redo;state.log=r.log;state.lastInit=r.lastInit;if(r.savedLogs)state.savedLogs=r.savedLogs;if(r.initHidden!==undefined){if(r.initHidden)state.initHidden=true;else delete state.initHidden;}save();renderResults();}
   else{other.push({what:s.what,groups:JSON.stringify(state.groups)});restoreGroups(s.groups);lockLast();save();renderGroups();renderResults();}
   renderUndo();
 }
@@ -1393,7 +1468,7 @@ function renderInit(){
   const P=state.pendingInit,L=state.lastInit,box=$('#initBox'),b=$('#initBtn');
   b.textContent=P?'⏹ Stop reading Roll20 rolls':state.rules.roll20?'⚡ Start initiative — then roll in Roll20':'⚡ Roll initiative';
   b.classList.toggle('stop',!!P);
-  $('#initClear').hidden=!L||!!P;
+  $('#initClear').hidden=!L||!!P;$('#initLog').hidden=!L||!!P;
   $('#initHint').textContent=P?'':state.rules.roll20?'Select the tokens that are rolling in Roll20 first. Each rolls its own d20 + the Initiative + above, which then goes back to 0, and goes on the Turn Order. Anyone already on it keeps their spot and number.':'Ticked enemies each roll their own d20 + their card’s Initiative +.';
   if(P){
     const got=P.recs.filter(r=>r.d20!=null).length,need=P.recs.length;
@@ -1876,7 +1951,7 @@ function renderResults(){
   renderRollBtn();renderInit();
   $('#undoBtn').hidden=!L||!!P;
   $('#redoBtn').hidden=!state.redo||!!L||!!P;
-  $('#clearResults').hidden=!L||!!P;
+  $('#clearResults').hidden=!L||!!P;$('#logResults').hidden=!L||!!P;renderLogs();
   $('#clearHistory').hidden=!state.log.some(x=>x.text);
   $('#history').innerHTML=state.log.filter(x=>x.text).map(x=>`<li>${esc(x.text)}</li>`).join('')||'<span class="muted">Nothing rolled yet.</span>';
   if(P){
@@ -1969,7 +2044,7 @@ function bindBackup(){
 function renderAll(){renderSpell();renderGroups();renderResults();renderSync();}
 load();
 if(/[?&]r20=1\b/.test(location.search)){state.rules.roll20=true;state.rules.r20Hp=true;}  // opened by the Roll20 bookmark
-bindSpell();bindGroups();bindResults();bindInit();bindBackup();renderAll();pingExt();
+bindSpell();bindGroups();bindResults();bindInit();bindBackup();bindLogs();renderAll();pingExt();
 logEv('page-load',`${navigator.userAgent.match(/(Chrome|Edg|Firefox|Safari)\/[\d.]+/g)?.join(' ')||'?'} roll20mode=${state.rules.roll20} groups=${state.groups.length}`);
 </script>
 </body>
